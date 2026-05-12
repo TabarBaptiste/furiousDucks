@@ -257,6 +257,8 @@ services:
     depends_on:
       - traefik
       - gitlab
+    extra_hosts:
+      - "git.wk-archi-o24a-4-5-g1.fr:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsSL http://localhost:8080/login || exit 1"]
       interval: 30s
