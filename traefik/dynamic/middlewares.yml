@@ -1,0 +1,54 @@
+# =============================================================================
+# Traefik Dynamic Configuration - Middlewares
+# Domain: wk-archi-o24a-4-5-g1.fr
+# =============================================================================
+
+http:
+  middlewares:
+
+    # -------------------------------------------------------------------------
+    # secure-headers - Hardens HTTP response headers
+    # Apply to all production routers for security best practices.
+    # -------------------------------------------------------------------------
+    secure-headers:
+      headers:
+        # XSS protection
+        browserXssFilter: true
+        # Prevent MIME-type sniffing
+        contentTypeNosniff: true
+        # Deny framing by default (overridden by customFrameOptionsValue)
+        frameDeny: true
+        # HSTS - enforce HTTPS for 1 year, include subdomains, allow preload
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        # Allow same-origin framing only
+        customFrameOptionsValue: "SAMEORIGIN"
+        # Referrer policy - send origin on cross-origin, full on same-origin
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # Strip server identity headers to reduce information leakage
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+
+    # -------------------------------------------------------------------------
+    # rate-limit - Throttles incoming requests
+    # Protects backend services from excessive traffic and abuse.
+    # -------------------------------------------------------------------------
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1s
+
+    # -------------------------------------------------------------------------
+    # auth-admin - Basic authentication for admin endpoints
+    # Users are injected at runtime via the TRAEFIK_ADMIN_USERS environment
+    # variable. Generate entries with: htpasswd -nB <username>
+    # Example docker-compose label:
+    #   traefik.http.middlewares.auth-admin.basicauth.users=${TRAEFIK_ADMIN_USERS}
+    # -------------------------------------------------------------------------
+    auth-admin:
+      basicAuth:
+        users:
+          - "${TRAEFIK_ADMIN_USERS}"

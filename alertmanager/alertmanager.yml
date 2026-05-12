@@ -1,0 +1,133 @@
+# =============================================================================
+# AlertManager Configuration
+# =============================================================================
+# Routes Prometheus alerts to the appropriate notification channels based on
+# severity. Handles deduplication, grouping, and silencing of alerts.
+#
+# Before deploying, replace all placeholder values marked with <PLACEHOLDER>.
+# =============================================================================
+
+# =============================================================================
+# Global Settings
+# =============================================================================
+# Shared configuration applied to all notification integrations.
+global:
+  # SMTP relay used to send email notifications.
+  smtp_smarthost: '<SMTP_HOST>:<SMTP_PORT>'
+
+  # Sender address shown in alert emails.
+  smtp_from: 'alertmanager@wk-archi-o24a-4-5-g1.fr'
+
+  # SMTP authentication credentials.
+  smtp_auth_username: '<SMTP_USERNAME>'
+  smtp_auth_password: '***REMOVED***'
+
+  # Set to false if the SMTP relay uses a valid TLS certificate.
+  # Set to true only in development or when using self-signed certificates.
+  smtp_require_tls: true
+
+# =============================================================================
+# Notification Templates
+# =============================================================================
+# Optional custom templates for email and Mattermost messages.
+# templates:
+#   - /etc/alertmanager/templates/*.tmpl
+
+# =============================================================================
+# Routing Tree
+# =============================================================================
+# Determines which receiver handles each alert based on label matchers.
+route:
+  # Group alerts by name and severity to reduce notification noise.
+  group_by:
+    - alertname
+    - severity
+
+  # How long to wait before sending a notification for a new group.
+  # Allows time for additional alerts in the same group to arrive.
+  group_wait: 30s
+
+  # How long to wait before sending updates about new alerts added to
+  # an existing group that has already fired.
+  group_interval: 5m
+
+  # How long to wait before re-sending a notification that has already
+  # been sent successfully.
+  repeat_interval: 4h
+
+  # Default receiver for alerts that do not match any child route.
+  receiver: default-receiver
+
+  # Child routes evaluated in order; first match wins.
+  routes:
+    # Critical alerts are sent to a dedicated receiver with a shorter
+    # repeat interval to ensure they are not overlooked.
+    - matchers:
+        - severity = "critical"
+      receiver: critical-receiver
+      repeat_interval: 1h
+      continue: false
+
+    # Warning alerts go to the default receiver at the standard cadence.
+    - matchers:
+        - severity = "warning"
+      receiver: default-receiver
+      continue: false
+
+# =============================================================================
+# Receivers
+# =============================================================================
+# Define notification channels. Each receiver can fan out to multiple
+# integrations (email, Slack, PagerDuty, etc.).
+receivers:
+
+  # ---------------------------------------------------------------------------
+  # Default Receiver
+  # ---------------------------------------------------------------------------
+  # Sends warning-level alerts via email to the DevOps team.
+  - name: default-receiver
+    email_configs:
+      - to: 'devops@wk-archi-o24a-4-5-g1.fr'
+        send_resolved: true
+        headers:
+          Subject: '[WARNING] {{ .GroupLabels.alertname }} - AlertManager'
+
+  # ---------------------------------------------------------------------------
+  # Critical Receiver
+  # ---------------------------------------------------------------------------
+  # Sends critical alerts via email AND Mattermost to ensure rapid response.
+  # Mattermost incoming webhooks are Slack-compatible, so slack_configs is used.
+  - name: critical-receiver
+    email_configs:
+      - to: 'devops@wk-archi-o24a-4-5-g1.fr'
+        send_resolved: true
+        headers:
+          Subject: '[CRITICAL] {{ .GroupLabels.alertname }} - AlertManager'
+
+    slack_configs:
+      - api_url: '${MATTERMOST_WEBHOOK_URL}'
+        channel: 'devops-alerts'
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}FIRING{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
+        text: >-
+          *Severity:* {{ .CommonLabels.severity }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Details:*
+          {{ range .Alerts }}
+            - *{{ .Labels.alertname }}* on {{ .Labels.instance }}
+          {{ end }}
+
+# =============================================================================
+# Inhibition Rules
+# =============================================================================
+# Suppress lower-severity alerts when a higher-severity alert is already
+# firing for the same alertname. This prevents duplicate notifications.
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    # Only inhibit when both the source and target share the same alertname
+    # and instance, ensuring unrelated warnings are not silenced.
+    equal:
+      - alertname

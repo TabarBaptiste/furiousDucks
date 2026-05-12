@@ -1,0 +1,286 @@
+# =============================================================================
+# Prometheus Alerting Rules
+# =============================================================================
+# Production alerting rules for the CI/CD infrastructure platform.
+#
+# Severity levels:
+#   - critical : Immediate action required. Service is down or data loss is
+#                imminent. Pages on-call engineers.
+#   - warning  : Attention needed soon. Performance is degraded or a threshold
+#                is approaching. Sends notification to the team channel.
+# =============================================================================
+
+groups:
+
+  # ===========================================================================
+  # Group 1 - Infrastructure Alerts
+  # ===========================================================================
+  # Host-level alerts for CPU, memory, and disk on the underlying machines.
+  - name: infrastructure
+    rules:
+
+      # -----------------------------------------------------------------------
+      # CPU: sustained high usage may indicate runaway processes or under-
+      # provisioned hosts.
+      # -----------------------------------------------------------------------
+      - alert: HostHighCpuUsage
+        expr: >
+          100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: >
+            CPU usage on {{ $labels.instance }} has been above 85% for the
+            last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+
+      # -----------------------------------------------------------------------
+      # Memory: sustained high memory pressure increases swap usage and the
+      # risk of OOM kills.
+      # -----------------------------------------------------------------------
+      - alert: HostHighMemoryUsage
+        expr: >
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: >
+            Memory usage on {{ $labels.instance }} has been above 85% for the
+            last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+
+      # -----------------------------------------------------------------------
+      # Disk (warning): running low on disk space causes build failures,
+      # log loss, and database corruption.
+      # -----------------------------------------------------------------------
+      - alert: HostDiskSpaceLow
+        expr: >
+          (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+                / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space low on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: >
+            Disk usage on {{ $labels.instance }} mountpoint {{ $labels.mountpoint }}
+            has been above 85% for the last 5 minutes.
+            Current value: {{ $value | printf "%.1f" }}%.
+
+      # -----------------------------------------------------------------------
+      # Disk (critical): nearly full disk requires immediate intervention.
+      # -----------------------------------------------------------------------
+      - alert: HostDiskSpaceCritical
+        expr: >
+          (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+                / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) * 100 > 95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space critical on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: >
+            Disk usage on {{ $labels.instance }} mountpoint {{ $labels.mountpoint }}
+            has exceeded 95%. Immediate action required.
+            Current value: {{ $value | printf "%.1f" }}%.
+
+      # -----------------------------------------------------------------------
+      # Disk (predictive): linear extrapolation predicts the filesystem will
+      # be full within 4 hours based on the trend of the last 1 hour.
+      # -----------------------------------------------------------------------
+      - alert: HostOutOfDiskSpace
+        expr: >
+          predict_linear(
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}[1h], 4 * 3600
+          ) < 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk on {{ $labels.instance }} ({{ $labels.mountpoint }}) predicted full within 4h"
+          description: >
+            Based on the current trend, the filesystem on {{ $labels.instance }}
+            mountpoint {{ $labels.mountpoint }} is predicted to run out of space
+            within the next 4 hours.
+
+  # ===========================================================================
+  # Group 2 - Container Alerts
+  # ===========================================================================
+  # Container-level alerts monitored via cAdvisor metrics.
+  - name: container
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Container down: a managed container has stopped unexpectedly.
+      # -----------------------------------------------------------------------
+      - alert: ContainerDown
+        expr: >
+          absent(container_last_seen{name=~".+"})
+          or (time() - container_last_seen{name=~".+"}) > 60
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.name }} is down"
+          description: >
+            Container {{ $labels.name }} on {{ $labels.instance }} has not been
+            seen for more than 1 minute.
+
+      # -----------------------------------------------------------------------
+      # Container CPU: sustained high CPU may starve other containers sharing
+      # the same host.
+      # -----------------------------------------------------------------------
+      - alert: ContainerHighCpuUsage
+        expr: >
+          (rate(container_cpu_usage_seconds_total{name=~".+"}[5m])) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage in container {{ $labels.name }}"
+          description: >
+            Container {{ $labels.name }} CPU usage has been above 80% for the
+            last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+
+      # -----------------------------------------------------------------------
+      # Container memory: high memory usage increases the risk of OOM kills.
+      # -----------------------------------------------------------------------
+      - alert: ContainerHighMemoryUsage
+        expr: >
+          (container_memory_usage_bytes{name=~".+"}
+           / container_spec_memory_limit_bytes{name=~".+"}) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage in container {{ $labels.name }}"
+          description: >
+            Container {{ $labels.name }} memory usage has been above 80% of its
+            limit for the last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+
+      # -----------------------------------------------------------------------
+      # Container restarts: frequent restarts indicate a crash loop.
+      # -----------------------------------------------------------------------
+      - alert: ContainerRestarting
+        expr: >
+          increase(container_restart_count{name=~".+"}[5m]) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} is restarting frequently"
+          description: >
+            Container {{ $labels.name }} has restarted more than 3 times in the
+            last 5 minutes. This may indicate a crash loop.
+
+  # ===========================================================================
+  # Group 3 - CI/CD Services Alerts
+  # ===========================================================================
+  # Application-level alerts for the core CI/CD services.
+  - name: cicd-services
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Jenkins down: blocks all CI pipelines.
+      # -----------------------------------------------------------------------
+      - alert: JenkinsDown
+        expr: up{job="jenkins"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Jenkins is unreachable"
+          description: >
+            The Jenkins CI server (job={{ $labels.job }}) has been unreachable
+            for more than 2 minutes. All CI pipelines are blocked.
+
+      # -----------------------------------------------------------------------
+      # GitLab down: blocks all source code operations and MR workflows.
+      # -----------------------------------------------------------------------
+      - alert: GitLabDown
+        expr: up{job="gitlab"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GitLab is unreachable"
+          description: >
+            The GitLab instance (job={{ $labels.job }}) has been unreachable
+            for more than 2 minutes. Source code management is unavailable.
+
+      # -----------------------------------------------------------------------
+      # SonarQube down: blocks quality gate checks but does not halt builds.
+      # -----------------------------------------------------------------------
+      - alert: SonarQubeDown
+        expr: up{job="sonarqube"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SonarQube is unreachable"
+          description: >
+            The SonarQube instance (job={{ $labels.job }}) has been unreachable
+            for more than 5 minutes. Quality gate checks will fail.
+
+      # -----------------------------------------------------------------------
+      # Traefik error rate: a high 5xx rate indicates upstream service failures
+      # or misconfigurations.
+      # -----------------------------------------------------------------------
+      - alert: TraefikHighErrorRate
+        expr: >
+          (
+            sum(rate(traefik_entrypoint_requests_total{code=~"5.."}[5m]))
+            /
+            sum(rate(traefik_entrypoint_requests_total[5m]))
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Traefik 5xx error rate is high"
+          description: >
+            The Traefik reverse proxy is returning HTTP 5xx errors at a rate
+            above 5% over the last 5 minutes.
+            Current error rate: {{ $value | printf "%.2f" }}%.
+
+  # ===========================================================================
+  # Group 4 - Backup Alerts
+  # ===========================================================================
+  # Alerts for backup job health. Relies on a custom metric pushed by the
+  # backup scripts (e.g. via Pushgateway or node-exporter textfile collector):
+  #   - backup_last_success_timestamp_seconds : Unix timestamp of last success
+  #   - backup_last_status                    : 0 = success, 1 = failure
+  - name: backup
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Backup failed: the most recent backup job reported a failure.
+      # -----------------------------------------------------------------------
+      - alert: BackupFailed
+        expr: backup_last_status == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backup job {{ $labels.job }} failed"
+          description: >
+            The backup job {{ $labels.job }} has reported a failure.
+            Investigate immediately to prevent data loss.
+
+      # -----------------------------------------------------------------------
+      # Backup too old: no successful backup in the last 26 hours. The 26h
+      # threshold allows a 2-hour grace period over a daily (24h) schedule.
+      # -----------------------------------------------------------------------
+      - alert: BackupTooOld
+        expr: >
+          (time() - backup_last_success_timestamp_seconds) > (26 * 3600)
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No recent backup for {{ $labels.job }}"
+          description: >
+            No successful backup has been recorded for job {{ $labels.job }}
+            in the last 26 hours. The daily backup schedule may be broken.

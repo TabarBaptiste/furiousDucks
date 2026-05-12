@@ -1,0 +1,39 @@
+// =============================================================================
+// Jenkinsfile - The Tip Top (Furious Ducks CI/CD)
+//
+// Full CI/CD pipeline for the The Tip Top application.
+//
+// Pipeline flow:
+//   develop branch  -> Lint, Test, SonarQube, Docker Build/Push, Deploy DEV
+//   main branch     -> All of the above + SAST, Gitleaks, E2E, K6, Deploy PREPROD
+//   semver tag      -> All of the above + Approval + Blue/Green Deploy PROD
+// =============================================================================
+
+@Library('furious-ducks-shared-library') _
+
+ciPipeline(
+    projectName   : 'thetiptop',
+    stack         : 'node',
+    sonarProject  : 'thetiptop',
+
+    // Deployment toggles
+    deployDev     : true,
+    deployPreprod : true,
+    deployProd    : true,
+
+    // Test toggles
+    runE2E        : true,
+    runK6         : true,
+
+    // Domains (one per environment)
+    devDomain     : 'thetiptop-dev.wk-archi-o24a-4-5-g1.fr',
+    preprodDomain : 'thetiptop-preprod.wk-archi-o24a-4-5-g1.fr',
+    prodDomain    : 'thetiptop.wk-archi-o24a-4-5-g1.fr',
+
+    // Application port
+    appPort       : 3000,
+
+    // K6 performance test configuration
+    k6Vus         : 100,
+    k6Duration    : '5m'
+)

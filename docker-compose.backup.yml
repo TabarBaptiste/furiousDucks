@@ -1,0 +1,181 @@
+# =============================================================================
+# Docker Compose - Backup Stack
+# =============================================================================
+# Automated backup infrastructure for the CI/CD platform.
+#
+# Components:
+#   - MinIO:          S3-compatible object storage for backup artifacts
+#   - Backup Manager: Restic-based backup agent mounting all CI data volumes
+#   - Ofelia:         Cron scheduler triggering backup, verify, and retention
+#
+# Usage:
+#   docker compose -f docker-compose.backup.yml up -d
+#
+# Prerequisites:
+#   - The ci_network and workflow-network must already exist (external).
+#   - External volumes (gitlab-*, jenkins-*, prometheus-*, grafana-*,
+#     sonarqube-*) must be created by the main CI compose stack.
+#   - A .env file must define:
+#       MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, RESTIC_PASSWORD
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # MinIO - S3-compatible object storage
+  # ---------------------------------------------------------------------------
+  # Provides the S3 backend that Restic writes backup snapshots to.
+  # Exposed via Traefik on two subdomains:
+  #   - s3.wk-archi-o24a-4-5-g1.fr     -> API   (port 9000)
+  #   - minio.wk-archi-o24a-4-5-g1.fr  -> Console (port 9001)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    container_name: common-minio-ci
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    networks:
+      - ci_network
+      - workflow-network
+      - backup_network
+    labels:
+      # --- Traefik: enable reverse-proxy discovery ---
+      - "traefik.enable=true"
+
+      # --- Router: MinIO S3 API (port 9000) ---
+      - "traefik.http.routers.minio-api.rule=Host(`s3.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.minio-api.entrypoints=websecure"
+      - "traefik.http.routers.minio-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.minio-api.service=minio-api-svc"
+      - "traefik.http.services.minio-api-svc.loadbalancer.server.port=9000"
+
+      # --- Router: MinIO Console (port 9001) ---
+      - "traefik.http.routers.minio-console.rule=Host(`minio.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.minio-console.entrypoints=websecure"
+      - "traefik.http.routers.minio-console.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.minio-console.service=minio-console-svc"
+      - "traefik.http.services.minio-console-svc.loadbalancer.server.port=9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Backup Manager - Restic backup agent
+  # ---------------------------------------------------------------------------
+  # Custom container running Restic against all CI/CD data volumes.
+  # Volumes are mounted read-only under /backup-sources/ so the backup
+  # process cannot accidentally modify production data.
+  # This service is CLI-only (no Traefik exposure); Ofelia triggers its
+  # backup scripts on a schedule.
+  # ---------------------------------------------------------------------------
+  backup-manager:
+    build: ./backup
+    container_name: common-backup-manager-ci
+    environment:
+      RESTIC_REPOSITORY: s3:http://common-minio-ci:9000/furious-ducks-backups
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      # --- CI/CD data volumes (read-only) ---
+      - gitlab-config:/backup-sources/gitlab-config:ro
+      - gitlab-data:/backup-sources/gitlab-data:ro
+      - jenkins-data:/backup-sources/jenkins-data:ro
+      - prometheus-data:/backup-sources/prometheus-data:ro
+      - grafana-data:/backup-sources/grafana-data:ro
+      - sonarqube-data:/backup-sources/sonarqube-data:ro
+      # --- Backup scripts ---
+      - ./backup/scripts:/scripts:ro
+    networks:
+      - backup_network
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Ofelia - Cron job scheduler
+  # ---------------------------------------------------------------------------
+  # Lightweight Docker-native cron scheduler. Executes commands inside the
+  # backup-manager container on the following schedule:
+  #
+  #   Daily   02:00       -> /scripts/backup-all.sh         (full backup)
+  #   Sunday  03:00       -> /scripts/verify-integrity.sh   (snapshot check)
+  #   1st of month 04:00  -> /scripts/retention.sh          (prune old snaps)
+  # ---------------------------------------------------------------------------
+  ofelia:
+    image: mcuadros/ofelia:latest
+    container_name: common-ofelia-ci
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      # --- Daily backup at 02:00 ---
+      - "ofelia.job-exec.backup-daily.schedule=0 0 2 * * *"
+      - "ofelia.job-exec.backup-daily.container=common-backup-manager-ci"
+      - "ofelia.job-exec.backup-daily.command=/scripts/backup-all.sh"
+      # --- Weekly integrity verification on Sunday at 03:00 ---
+      - "ofelia.job-exec.verify-weekly.schedule=0 0 3 * * 0"
+      - "ofelia.job-exec.verify-weekly.container=common-backup-manager-ci"
+      - "ofelia.job-exec.verify-weekly.command=/scripts/verify-integrity.sh"
+      # --- Monthly retention / pruning on the 1st at 04:00 ---
+      - "ofelia.job-exec.retention-monthly.schedule=0 0 4 1 * *"
+      - "ofelia.job-exec.retention-monthly.container=common-backup-manager-ci"
+      - "ofelia.job-exec.retention-monthly.command=/scripts/retention.sh"
+    networks:
+      - backup_network
+    depends_on:
+      - backup-manager
+    restart: unless-stopped
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  # Shared network with the main CI/CD compose stack
+  ci_network:
+    external: true
+
+  # Cross-stack workflow network
+  workflow-network:
+    external: true
+
+  # Internal network for backup traffic (MinIO <-> Backup Manager <-> Ofelia)
+  backup_network:
+    internal: true
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  # MinIO persistent storage (managed by this stack)
+  minio-data:
+    driver: local
+
+  # External volumes created and managed by the main CI/CD and monitoring stacks
+  # The 'name' must match the actual Docker volume name set in the source compose
+  gitlab-config:
+    name: common-gitlab-config-ci
+    external: true
+  gitlab-data:
+    name: common-gitlab-data-ci
+    external: true
+  jenkins-data:
+    name: common-jenkins-data-ci
+    external: true
+  prometheus-data:
+    name: common-prometheus-data-ci
+    external: true
+  grafana-data:
+    name: common-grafana-data-ci
+    external: true
+  sonarqube-data:
+    name: common-sonarqube-data-ci
+    external: true

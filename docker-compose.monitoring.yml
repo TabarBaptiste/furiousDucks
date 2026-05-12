@@ -1,0 +1,230 @@
+# =============================================================================
+# Monitoring Stack - Docker Compose Configuration
+# Domain: wk-archi-o24a-4-5-g1.fr
+#
+# Services:
+#   - Prometheus   (metrics collection & alerting rules)
+#   - Grafana      (dashboards & visualization)
+#   - Loki         (log aggregation)
+#   - Promtail     (log shipping agent)
+#   - cAdvisor     (container metrics)
+#   - AlertManager (alert routing & notifications)
+#   - Node Exporter (host-level metrics)
+#
+# Networks:
+#   - ci_network         : shared with CI/CD services (external)
+#   - workflow-network   : shared with workflow services (external)
+#   - monitoring_network : internal network for inter-service communication
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus - Metrics Collection & Storage
+  # Accessible at: https://prometheus.wk-archi-o24a-4-5-g1.fr
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.0
+    container_name: common-prometheus-ci
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+    networks:
+      - ci_network
+      - monitoring_network
+    labels:
+      # --- Traefik reverse-proxy configuration ---
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      - "traefik.http.routers.prometheus.tls=true"
+      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.prometheus.middlewares=secure-headers@file"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      - "traefik.docker.network=ci_network"
+
+  # ---------------------------------------------------------------------------
+  # Grafana - Dashboards & Visualization
+  # Accessible at: https://monitor.wk-archi-o24a-4-5-g1.fr
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: common-grafana-ci
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
+      - GF_SERVER_ROOT_URL=https://monitor.wk-archi-o24a-4-5-g1.fr
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - ci_network
+      - monitoring_network
+    labels:
+      # --- Traefik reverse-proxy configuration ---
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`monitor.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.grafana.middlewares=secure-headers@file"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - "traefik.docker.network=ci_network"
+      - "traefik.http.routers.grafana-alias.rule=Host(`grafana.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.grafana-alias.entrypoints=websecure"
+      - "traefik.http.routers.grafana-alias.tls=true"
+      - "traefik.http.routers.grafana-alias.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.grafana-alias.middlewares=secure-headers@file"
+      - "traefik.http.routers.grafana-alias.service=grafana"
+
+  # ---------------------------------------------------------------------------
+  # Loki - Log Aggregation Backend
+  # Internal only - not exposed via Traefik
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: common-loki-ci
+    restart: unless-stopped
+    command:
+      - "-config.file=/etc/loki/loki-config.yml"
+    volumes:
+      - loki-data:/loki
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    networks:
+      - ci_network
+      - monitoring_network
+    labels:
+      - "traefik.enable=false"
+
+  # ---------------------------------------------------------------------------
+  # Promtail - Log Shipping Agent
+  # Internal only - collects and forwards logs to Loki
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: common-promtail-ci
+    restart: unless-stopped
+    depends_on:
+      - loki
+    command:
+      - "-config.file=/etc/promtail/promtail-config.yml"
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ci_network
+      - monitoring_network
+    labels:
+      - "traefik.enable=false"
+
+  # ---------------------------------------------------------------------------
+  # cAdvisor - Container Metrics Exporter
+  # Internal only - scraped by Prometheus on port 8080
+  # Host port 8081 mapped for debugging if needed
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: common-cadvisor-ci
+    restart: unless-stopped
+    privileged: false
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    networks:
+      - ci_network
+      - monitoring_network
+    labels:
+      - "traefik.enable=false"
+
+  # ---------------------------------------------------------------------------
+  # AlertManager - Alert Routing & Notification
+  # Internal only - receives alerts from Prometheus
+  # ---------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: common-alertmanager-ci
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - ci_network
+      - monitoring_network
+    labels:
+      - "traefik.enable=false"
+
+  # ---------------------------------------------------------------------------
+  # Node Exporter - Host-Level Metrics
+  # Internal only - scraped by Prometheus for OS/hardware metrics
+  # ---------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: common-node-exporter-ci
+    restart: unless-stopped
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - ci_network
+      - monitoring_network
+    labels:
+      - "traefik.enable=false"
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  # Shared network with CI/CD services (created by main docker-compose)
+  ci_network:
+    external: true
+
+  # Shared network with workflow services
+  workflow-network:
+    external: true
+
+  # Internal network for monitoring services communication
+  monitoring_network:
+    driver: bridge
+
+# =============================================================================
+# Volumes - Persistent storage for monitoring data
+# =============================================================================
+volumes:
+  prometheus-data:
+    name: common-prometheus-data-ci
+    driver: local
+  grafana-data:
+    name: common-grafana-data-ci
+    driver: local
+  loki-data:
+    name: common-loki-data-ci
+    driver: local
+  alertmanager-data:
+    name: common-alertmanager-data-ci
+    driver: local

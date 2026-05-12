@@ -1,0 +1,397 @@
+###############################################################################
+# docker-compose.yml - VPS Socle CI/CD - Furious Ducks
+# Domain: wk-archi-o24a-4-5-g1.fr
+#
+# This is the main docker-compose for the CI/CD foundation server.
+# It provisions the core services required by the Furious Ducks workflow:
+#   - Traefik  (reverse proxy, TLS termination, Let's Encrypt)
+#   - GitLab CE (SCM)
+#   - Jenkins   (CI server, built from custom Dockerfile)
+#   - SonarQube (code quality analysis)
+#   - SonarQube PostgreSQL (backing database for SonarQube)
+#
+# Harbor (Docker registry) is NOT included here. It must be deployed
+# separately using its official installer (./install.sh) which generates
+# its own docker-compose.yml. To integrate Harbor with Traefik:
+#   1. Run the Harbor installer: ./install.sh --with-trivy
+#   2. Edit Harbor's docker-compose.yml to attach the harbor-nginx (proxy)
+#      service to the "ci_network" external network.
+#   3. Add Traefik labels to the harbor-nginx service:
+#        labels:
+#          - "traefik.enable=true"
+#          - "traefik.docker.network=ci_network"
+#          - "traefik.http.routers.harbor.rule=Host(`registry.wk-archi-o24a-4-5-g1.fr`)"
+#          - "traefik.http.routers.harbor.entrypoints=websecure"
+#          - "traefik.http.routers.harbor.tls.certresolver=letsencrypt"
+#          - "traefik.http.routers.harbor.middlewares=secure-headers@file"
+#          - "traefik.http.services.harbor.loadbalancer.server.port=8080"
+#   4. Add the ci_network as an external network in Harbor's compose:
+#        networks:
+#          ci_network:
+#            external: true
+#   5. Restart Harbor: docker-compose -f docker-compose.yml up -d
+#
+# Prerequisites:
+#   - Create a .env file alongside this docker-compose.yml with required
+#     secrets (see variables referenced below).
+#   - Ensure DNS records point all subdomains to this server's IP:
+#       traefik.wk-archi-o24a-4-5-g1.fr
+#       git.wk-archi-o24a-4-5-g1.fr
+#       ci.wk-archi-o24a-4-5-g1.fr
+#       registry.wk-archi-o24a-4-5-g1.fr  (handled by Harbor)
+#       sonar.wk-archi-o24a-4-5-g1.fr
+#   - Create the traefik/acme/acme.json file with permissions 600.
+#   - Build the custom Jenkins image: docker compose build jenkins
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f
+#   docker compose down
+#
+# Networks:
+#   ci_network      - Internal bridge for CI/CD service communication
+#   workflow-network - Shared external network for cross-stack communication
+#                      (monitoring, backup, project environments connect here)
+###############################################################################
+
+services:
+
+  #############################################################################
+  # TRAEFIK - Reverse Proxy & TLS Termination
+  # Dashboard: https://traefik.wk-archi-o24a-4-5-g1.fr
+  # Handles HTTPS termination via Let's Encrypt for all exposed services.
+  #############################################################################
+  traefik:
+    image: traefik:v2.11
+    container_name: common-traefik-ci
+    restart: unless-stopped
+    ports:
+      # HTTP - redirects to HTTPS
+      - "80:80"
+      # HTTPS - main entry point for all services
+      - "443:443"
+      # Dashboard - exposed via Traefik labels (internal access only)
+      - "8080:8080"
+    volumes:
+      # Docker socket (read-only) - Traefik discovers services via labels
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Static configuration
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      # Dynamic configuration directory
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      # ACME certificates storage (Let's Encrypt)
+      - ./traefik/acme/acme.json:/acme.json
+    command:
+      # ------- Entrypoints -------
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      # ------- API / Dashboard -------
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--ping=true"
+      # ------- Docker provider -------
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=ci_network"
+      # ------- File provider (dynamic config) -------
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      # ------- Let's Encrypt ACME resolver -------
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      # ------- Logging -------
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+    labels:
+      # Enable Traefik for this container
+      - "traefik.enable=true"
+      # --- Dashboard router ---
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls=true"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-dashboard.tls.domains[0].main=traefik.wk-archi-o24a-4-5-g1.fr"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      - "traefik.http.routers.traefik-dashboard.middlewares=secure-headers@file,traefik-auth@docker"
+      # --- Dashboard basic auth middleware ---
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
+      # --- Security headers middleware (shared across all services) ---
+      - "traefik.http.middlewares.security-headers.headers.browserxssfilter=true"
+      - "traefik.http.middlewares.security-headers.headers.contenttypenosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.security-headers.headers.stsincludesubdomains=true"
+      - "traefik.http.middlewares.security-headers.headers.stspreload=true"
+      - "traefik.http.middlewares.security-headers.headers.stsseconds=31536000"
+      - "traefik.http.middlewares.security-headers.headers.customframeoptionsvalue=SAMEORIGIN"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.security-headers.headers.permissionsPolicy=camera=(), microphone=(), geolocation=()"
+    networks:
+      - ci_network
+      - workflow-network
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  #############################################################################
+  # GITLAB CE - Source Code Management (SCM)
+  # URL: https://git.wk-archi-o24a-4-5-g1.fr
+  # SSH: ssh://git@git.wk-archi-o24a-4-5-g1.fr:2222
+  #############################################################################
+  gitlab:
+    image: gitlab/gitlab-ce:18.11.2-ce.0
+    container_name: common-gitlab-ci
+    restart: unless-stopped
+    hostname: git.wk-archi-o24a-4-5-g1.fr
+    ports:
+      # SSH access for Git operations (host:container)
+      - "2222:22"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        ## External URL - accessed via Traefik reverse proxy
+        external_url 'https://git.wk-archi-o24a-4-5-g1.fr'
+
+        ## Nginx configuration - Traefik handles TLS termination
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        nginx['proxy_set_headers'] = {
+          "X-Forwarded-Proto" => "https",
+          "X-Forwarded-Ssl" => "on"
+        }
+
+        ## Disable built-in Let's Encrypt (Traefik handles certificates)
+        letsencrypt['enable'] = false
+
+        ## GitLab Shell SSH port (matches the published host port)
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+
+        ## Timezone
+        gitlab_rails['time_zone'] = 'Europe/Paris'
+
+        ## Email configuration (customize via .env)
+        gitlab_rails['smtp_enable'] = false
+
+        ## Disable unused services to reduce resource consumption
+        prometheus_monitoring['enable'] = false
+        # grafana['enable'] = false  # Not supported in GitLab 17.4
+
+        ## Initial root password (change after first login)
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD}'
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - gitlab-logs:/var/log/gitlab
+    labels:
+      # Enable Traefik routing
+      - "traefik.enable=true"
+      # --- HTTP router ---
+      - "traefik.http.routers.gitlab.rule=Host(`git.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.gitlab.entrypoints=websecure"
+      - "traefik.http.routers.gitlab.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.gitlab.middlewares=secure-headers@file"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=80"
+    networks:
+      - ci_network
+      - workflow-network
+    depends_on:
+      - traefik
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost/-/health || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 300s
+    shm_size: "256m"
+
+  #############################################################################
+  # JENKINS - Continuous Integration Server
+  # URL: https://ci.wk-archi-o24a-4-5-g1.fr
+  # Built from custom Dockerfile (./jenkins/Dockerfile) with pre-installed
+  # plugins and Configuration as Code (CasC) support.
+  #############################################################################
+  jenkins:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
+    container_name: common-jenkins-ci
+    restart: unless-stopped
+    env_file:
+      - .env 
+    ports:
+      # JNLP agent port (internal communication only)
+      - "50000:50000"
+    environment:
+      # Jenkins base URL for reverse proxy awareness
+      - JENKINS_OPTS=--prefix=/ --httpPort=8080
+      # JVM tuning for production workloads
+      - JAVA_OPTS=-Xmx2g -Xms512m -Djava.awt.headless=true -Djenkins.install.runSetupWizard=false
+      # CasC configuration path
+      - CASC_JENKINS_CONFIG=/var/jenkins_home/casc
+    volumes:
+      # Persistent Jenkins data (jobs, builds, plugins, credentials)
+      - jenkins-data:/var/jenkins_home
+      # Docker socket for Docker-in-Docker builds
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Jenkins CasC configuration
+      - ./jenkins/casc:/var/jenkins_home/casc:ro
+    labels:
+      # Enable Traefik routing
+      - "traefik.enable=true"
+      # --- HTTP router ---
+      - "traefik.http.routers.jenkins.rule=Host(`ci.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.jenkins.entrypoints=websecure"
+      - "traefik.http.routers.jenkins.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.jenkins.middlewares=secure-headers@file"
+      - "traefik.http.services.jenkins.loadbalancer.server.port=8080"
+    networks:
+      - ci_network
+      - workflow-network
+    depends_on:
+      - traefik
+      - gitlab
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8080/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  #############################################################################
+  # SONARQUBE - Code Quality & Security Analysis
+  # URL: https://sonar.wk-archi-o24a-4-5-g1.fr
+  # Quality gates enforce minimum thresholds before deployment.
+  #############################################################################
+  sonarqube:
+    image: sonarqube:24.12.0.100206-community
+    container_name: common-sonarqube-ci
+    restart: unless-stopped
+    environment:
+      # PostgreSQL connection
+      - SONAR_JDBC_URL=jdbc:postgresql://sonarqube-db:5432/${SONARQUBE_DB_NAME:-sonarqube}
+      - SONAR_JDBC_USERNAME=${SONARQUBE_DB_USER:-sonarqube}
+      - SONAR_JDBC_PASSWORD=${SONARQUBE_DB_PASSWORD}
+      # SonarQube base URL
+      - SONAR_WEB_CONTEXT=/
+      - SONAR_WEB_PORT=9000
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    labels:
+      # Enable Traefik routing
+      - "traefik.enable=true"
+      # --- HTTP router ---
+      - "traefik.http.routers.sonarqube.rule=Host(`sonar.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.sonarqube.entrypoints=websecure"
+      - "traefik.http.routers.sonarqube.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.sonarqube.middlewares=secure-headers@file"
+      - "traefik.http.services.sonarqube.loadbalancer.server.port=9000"
+      - "traefik.docker.network=ci_network"
+    networks:
+      - ci_network
+      - workflow-network
+    depends_on:
+      sonarqube-db:
+        condition: service_healthy
+      traefik:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:9000/api/system/status | grep -qE '\"status\":\"(UP|DB_MIGRATION_NEEDED|DB_MIGRATION_RUNNING)\"' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    # SonarQube requires increased vm.max_map_count on the host:
+    #   sudo sysctl -w vm.max_map_count=524288
+    #   sudo sysctl -w fs.file-max=131072
+    # To make it persistent, add to /etc/sysctl.conf:
+    #   vm.max_map_count=524288
+    #   fs.file-max=131072
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+      nproc:
+        soft: 8192
+        hard: 8192
+
+  #############################################################################
+  # SONARQUBE DATABASE - PostgreSQL
+  # Internal service, not exposed via Traefik.
+  #############################################################################
+  sonarqube-db:
+    image: postgres:16-alpine
+    container_name: common-sonarqube-db-ci
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${SONARQUBE_DB_NAME:-sonarqube}
+      - POSTGRES_USER=${SONARQUBE_DB_USER:-sonarqube}
+      - POSTGRES_PASSWORD=${SONARQUBE_DB_PASSWORD}
+    volumes:
+      - sonarqube-db-data:/var/lib/postgresql/data
+    networks:
+      - ci_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SONARQUBE_DB_USER:-sonarqube} -d ${SONARQUBE_DB_NAME:-sonarqube}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+###############################################################################
+# VOLUMES
+# Named volumes for persistent data across container restarts and upgrades.
+###############################################################################
+volumes:
+  # GitLab
+  gitlab-config:
+    name: common-gitlab-config-ci
+  gitlab-data:
+    name: common-gitlab-data-ci
+  gitlab-logs:
+    name: common-gitlab-logs-ci
+
+  # Jenkins
+  jenkins-data:
+    name: common-jenkins-data-ci
+
+  # SonarQube
+  sonarqube-data:
+    name: common-sonarqube-data-ci
+  sonarqube-extensions:
+    name: common-sonarqube-extensions-ci
+  sonarqube-logs:
+    name: common-sonarqube-logs-ci
+
+  # SonarQube PostgreSQL
+  sonarqube-db-data:
+    name: common-sonarqube-db-data-ci
+
+###############################################################################
+# NETWORKS
+###############################################################################
+networks:
+  # Internal network for CI/CD services on this VPS
+  # All services on the socle communicate through this network.
+  ci_network:
+    name: ci_network
+    driver: bridge
+
+  # Shared network for cross-stack communication.
+  # Monitoring (Prometheus, Grafana, Loki), backup (Restic, MinIO),
+  # and project environments (DEV, PREPROD, PROD) connect via this network.
+  # Harbor also joins this network after being deployed with its own installer.
+  # Declared as external: true so other docker-compose stacks can attach to it.
+  # Create it manually before first run:
+  #   docker network create workflow-network
+  workflow-network:
+    name: workflow-network
+    external: true

@@ -1,0 +1,52 @@
+# =============================================================================
+# Jenkins Plugins - Furious Ducks CI/CD
+#
+# Installed at image build time via jenkins-plugin-cli.
+# Format: <plugin-id>  (latest compatible version is resolved automatically)
+# =============================================================================
+
+# --- Source Control --------------------------------------------------------
+git
+gitlab-plugin
+
+# --- Pipeline / Workflow ---------------------------------------------------
+workflow-aggregator
+pipeline-stage-view
+pipeline-utility-steps
+
+# --- Docker ----------------------------------------------------------------
+docker-workflow
+docker-plugin
+
+# --- Configuration as Code -------------------------------------------------
+configuration-as-code
+
+# --- Credentials -----------------------------------------------------------
+credentials
+credentials-binding
+ssh-credentials
+
+# --- UI / UX ---------------------------------------------------------------
+blueocean
+timestamper
+
+# --- Code Quality ----------------------------------------------------------
+sonar
+
+# --- Monitoring / Observability --------------------------------------------
+prometheus
+
+# --- Authorization ---------------------------------------------------------
+role-strategy
+matrix-auth
+
+# --- Build Utilities -------------------------------------------------------
+ws-cleanup
+http_request
+
+# --- Notifications ---------------------------------------------------------
+email-ext
+
+# --- Reporting (Code Coverage) -------------------------------------------------
+htmlpublisher
+junit

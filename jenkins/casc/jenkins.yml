@@ -1,0 +1,217 @@
+# =============================================================================
+# Jenkins Configuration as Code (JCasC) - Furious Ducks CI/CD
+#
+# This file is loaded automatically at startup via the CASC_JENKINS_CONFIG
+# environment variable.  All secrets are injected through environment
+# variables so this file can live safely in version control.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Jenkins Settings
+# -----------------------------------------------------------------------------
+jenkins:
+  systemMessage: "Furious Ducks CI/CD - Jenkins"
+  numExecutors: 0
+  scmCheckoutRetryCount: 3
+  quietPeriod: 5
+
+  # Markup formatter - allow HTML in descriptions
+  markupFormatter:
+    rawHtml:
+      disableSyntaxHighlighting: false
+
+  # ---------------------------------------------------------------------------
+  # Security Realm - local database with an admin user
+  # ---------------------------------------------------------------------------
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          name: "Admin CI"
+          password: "${JENKINS_ADMIN_PASSWORD:-admin}"
+
+  # ---------------------------------------------------------------------------
+  # Authorization Strategy - Role-based access control
+  # ---------------------------------------------------------------------------
+  authorizationStrategy:
+    roleBased:
+      roles:
+        global:
+          # ----- Admin CI role (full permissions) -----
+          - name: "admin"
+            description: "Admin CI - full permissions"
+            permissions:
+              - "Overall/Administer"
+              - "Overall/Read"
+              - "Job/Build"
+              - "Job/Cancel"
+              - "Job/Configure"
+              - "Job/Create"
+              - "Job/Delete"
+              - "Job/Discover"
+              - "Job/Move"
+              - "Job/Read"
+              - "Job/Workspace"
+              - "Run/Delete"
+              - "Run/Replay"
+              - "Run/Update"
+              - "View/Configure"
+              - "View/Create"
+              - "View/Delete"
+              - "View/Read"
+              - "SCM/Tag"
+              - "Agent/Build"
+              - "Agent/Configure"
+              - "Agent/Connect"
+              - "Agent/Create"
+              - "Agent/Delete"
+              - "Agent/Disconnect"
+              - "Credentials/Create"
+              - "Credentials/Delete"
+              - "Credentials/ManageDomains"
+              - "Credentials/Update"
+              - "Credentials/View"
+            entries:
+              - user: "admin"
+
+          # ----- Maintainer role (build, read, configure jobs) -----
+          - name: "maintainer"
+            description: "Maintainer - build, read, configure jobs"
+            permissions:
+              - "Overall/Read"
+              - "Job/Build"
+              - "Job/Cancel"
+              - "Job/Configure"
+              - "Job/Create"
+              - "Job/Discover"
+              - "Job/Read"
+              - "Job/Workspace"
+              - "Run/Replay"
+              - "Run/Update"
+              - "View/Configure"
+              - "View/Create"
+              - "View/Read"
+              - "SCM/Tag"
+            entries:
+              - group: "maintainers"
+
+          # ----- Developer role (read, build only) -----
+          - name: "developer"
+            description: "Developer - read and build only"
+            permissions:
+              - "Overall/Read"
+              - "Job/Build"
+              - "Job/Cancel"
+              - "Job/Discover"
+              - "Job/Read"
+              - "Job/Workspace"
+              - "Run/Replay"
+              - "View/Read"
+            entries:
+              - group: "developers"
+
+  # ---------------------------------------------------------------------------
+  # Cloud - Docker cloud for ephemeral build agents
+  # ---------------------------------------------------------------------------
+  clouds:
+    - docker:
+        name: "docker-cloud"
+        dockerApi:
+          dockerHost:
+            uri: "unix:///var/run/docker.sock"
+        templates:
+          - labelString: "docker-agent"
+            dockerTemplateBase:
+              image: "jenkins/inbound-agent:latest-jdk17"
+              mountsString: "/var/run/docker.sock:/var/run/docker.sock"
+              environmentsString: |
+                JENKINS_AGENT_WORKDIR=/home/jenkins/agent
+            remoteFs: "/home/jenkins/agent"
+            connector:
+              attach:
+                user: "jenkins"
+            instanceCapStr: "5"
+            retentionStrategy:
+              idleMinutes: 10
+
+          - labelString: "docker-agent-node"
+            dockerTemplateBase:
+              image: "node:20-bullseye"
+              mountsString: "/var/run/docker.sock:/var/run/docker.sock"
+              environmentsString: |
+                JENKINS_AGENT_WORKDIR=/home/jenkins/agent
+            remoteFs: "/home/jenkins/agent"
+            connector:
+              attach:
+                user: "root"
+            instanceCapStr: "3"
+            retentionStrategy:
+              idleMinutes: 10
+
+# -----------------------------------------------------------------------------
+# Unclassified - Plugin-level global settings
+# -----------------------------------------------------------------------------
+unclassified:
+  # SonarQube Global Configuration
+  sonarGlobalConfiguration:
+    buildWrapperEnabled: true
+    installations:
+      - name: "SonarQube"
+        serverUrl: "http://common-sonarqube-ci:9000"
+        credentialsId: "sonarqube-token"
+        triggers:
+          skipScmCause: false
+          skipUpstreamCause: false
+
+  # GitLab Connection
+  gitLabConnectionConfig:
+    connections:
+      - name: "GitLab"
+        url: "https://git.wk-archi-o24a-4-5-g1.fr"
+        apiTokenId: "gitlab-api-token"
+        clientBuilderId: "autodetect"
+        ignoreCertificateErrors: false
+
+  # Jenkins Location
+  location:
+    url: "https://ci.wk-archi-o24a-4-5-g1.fr/"
+    adminAddress: "ci-admin@wk-archi-o24a-4-5-g1.fr"
+
+  # Mattermost notification defaults
+  # mattermostNotifier:
+  #   endpoint: "${MATTERMOST_WEBHOOK_URL}"
+  #   channel: "ci-cd"
+  #   icon: ""
+  #   buildServerUrl: "https://ci.wk-archi-o24a-4-5-g1.fr/"
+
+  # Email notification defaults
+  email-ext:
+    defaultSuffix: "@wk-archi-o24a-4-5-g1.fr"
+    mailAccount:
+      smtpHost: "smtp.wk-archi-o24a-4-5-g1.fr"
+      smtpPort: "587"
+      useSsl: false
+      useTls: true
+
+  # Timestamper
+  timestamper:
+    allPipelines: true
+
+# Security: Content Security Policy
+security:
+  contentSecurityPolicy:
+    enforce: true
+
+# -----------------------------------------------------------------------------
+# Tool Installations
+# -----------------------------------------------------------------------------
+tool:
+  sonarRunnerInstallation:
+    installations:
+      - name: "SonarScanner"
+        properties:
+          - installSource:
+              installers:
+                - sonarRunnerInstaller:
+                    id: "6.2.1.4610"

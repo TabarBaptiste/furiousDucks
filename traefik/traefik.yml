@@ -1,0 +1,82 @@
+# =============================================================================
+# Traefik Static Configuration - Furious Ducks CI/CD
+# Domain: wk-archi-o24a-4-5-g1.fr
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Global settings
+# -----------------------------------------------------------------------------
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+# -----------------------------------------------------------------------------
+# API / Dashboard
+# -----------------------------------------------------------------------------
+api:
+  dashboard: true
+  insecure: false
+
+ping: {}
+
+# -----------------------------------------------------------------------------
+# EntryPoints
+# -----------------------------------------------------------------------------
+entryPoints:
+  # HTTP - redirects permanently to HTTPS
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  # HTTPS
+  websecure:
+    address: ":443"
+
+# -----------------------------------------------------------------------------
+# Providers
+# -----------------------------------------------------------------------------
+providers:
+  # Docker provider - auto-discovers containers on ci_network
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: ci_network
+    watch: true
+
+  # File provider - loads dynamic configuration from /etc/traefik/dynamic
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+# -----------------------------------------------------------------------------
+# TLS - Let's Encrypt certificate resolver
+# -----------------------------------------------------------------------------
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "devops@wk-archi-o24a-4-5-g1.fr"
+      storage: "/acme.json"
+      httpChallenge:
+        entryPoint: web
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+log:
+  level: INFO
+  # filePath: "/var/log/traefik/traefik.log"
+
+accessLog:
+  # filePath: "/var/log/traefik/access.log"
+
+# -----------------------------------------------------------------------------
+# Metrics - Prometheus
+# -----------------------------------------------------------------------------
+metrics:
+  prometheus:
+    entryPoint: websecure

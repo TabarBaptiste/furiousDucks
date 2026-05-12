@@ -1,0 +1,138 @@
+# =============================================================================
+# Prometheus Configuration
+# =============================================================================
+# Central monitoring configuration for the CI/CD infrastructure.
+# Scrapes metrics from all platform services and evaluates alerting rules.
+# =============================================================================
+
+global:
+  # How frequently to scrape targets by default.
+  scrape_interval: 15s
+
+  # How frequently to evaluate alerting and recording rules.
+  evaluation_interval: 15s
+
+# =============================================================================
+# Alerting Configuration
+# =============================================================================
+# Forward alerts to AlertManager for deduplication, grouping, and routing.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - common-alertmanager-ci:9093
+
+# =============================================================================
+# Rule Files
+# =============================================================================
+# Load alerting and recording rules from the rules directory.
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# =============================================================================
+# Scrape Configurations
+# =============================================================================
+# Each job defines a set of targets to scrape and any job-specific overrides.
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # 1. Prometheus (self-monitoring)
+  # ---------------------------------------------------------------------------
+  # Prometheus scrapes its own metrics to monitor query performance,
+  # storage usage, and scrape health.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
+  # ---------------------------------------------------------------------------
+  # 2. Node Exporter
+  # ---------------------------------------------------------------------------
+  # Exposes host-level hardware and OS metrics (CPU, memory, disk, network).
+  - job_name: node-exporter
+    static_configs:
+      - targets:
+          - common-node-exporter-ci:9100
+
+  # ---------------------------------------------------------------------------
+  # 3. cAdvisor
+  # ---------------------------------------------------------------------------
+  # Exposes container-level resource usage and performance metrics.
+  - job_name: cadvisor
+    static_configs:
+      - targets:
+          - common-cadvisor-ci:8080
+
+  # ---------------------------------------------------------------------------
+  # 4. Traefik (Reverse Proxy / Load Balancer)
+  # ---------------------------------------------------------------------------
+  # Exposes request rates, latencies, and backend health.
+  - job_name: traefik
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - common-traefik-ci:8080
+
+  # ---------------------------------------------------------------------------
+  # 5. Jenkins (CI Server)
+  # ---------------------------------------------------------------------------
+  # Exposes build queue length, executor usage, job durations, and plugin stats.
+  - job_name: jenkins
+    metrics_path: /prometheus
+    static_configs:
+      - targets:
+          - common-jenkins-ci:8080
+
+  # ---------------------------------------------------------------------------
+  # 6. GitLab (Source Code Management)
+  # ---------------------------------------------------------------------------
+  # Exposes Rails, Sidekiq, and Gitaly performance metrics.
+  # Note: Requires the Prometheus metrics endpoint to be enabled in GitLab
+  # admin settings (Admin > Settings > Metrics and profiling > Metrics).
+  - job_name: gitlab
+    metrics_path: /-/metrics
+    static_configs:
+      - targets:
+          - common-gitlab-ci:80
+
+  # ---------------------------------------------------------------------------
+  # 7. SonarQube (Code Quality)
+  # ---------------------------------------------------------------------------
+  # Exposes analysis queue, compute engine, and database connection metrics.
+  # Note: Requires the Monitoring plugin or built-in metrics endpoint to be
+  # enabled (available in SonarQube Developer Edition and above, or via plugin).
+  - job_name: sonarqube
+    metrics_path: /api/monitoring/metrics
+    static_configs:
+      - targets:
+          - common-sonarqube-ci:9000
+
+  # ---------------------------------------------------------------------------
+  # 8. MinIO (Object Storage)
+  # ---------------------------------------------------------------------------
+  # Exposes bucket usage, request rates, and replication metrics.
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets:
+          - common-minio-ci:9000
+
+  # ---------------------------------------------------------------------------
+  # 9. Loki (Log Aggregation)
+  # ---------------------------------------------------------------------------
+  # Exposes ingestion rates, query performance, and storage metrics.
+  - job_name: loki
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - common-loki-ci:3100
+
+  # ---------------------------------------------------------------------------
+  # 10. Grafana (Dashboarding)
+  # ---------------------------------------------------------------------------
+  # Exposes dashboard render times, data source health, and user sessions.
+  - job_name: grafana
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - common-grafana-ci:3000
