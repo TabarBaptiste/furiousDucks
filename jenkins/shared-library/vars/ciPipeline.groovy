@@ -697,7 +697,7 @@ def deployContainer(Map args) {
             --restart unless-stopped \
             --network ${args.traefikNetwork} \
             --label "traefik.enable=true" \
-            --label "traefik.http.routers.${containerName}.rule=Host(\`${args.domain}\`)" \
+            --label "traefik.http.routers.${containerName}.rule=Host(\${args.domain})" \
             --label "traefik.http.routers.${containerName}.entrypoints=websecure" \
             --label "traefik.http.routers.${containerName}.tls.certresolver=letsencrypt" \
             --label "traefik.http.services.${containerName}.loadbalancer.server.port=${args.port}" \
