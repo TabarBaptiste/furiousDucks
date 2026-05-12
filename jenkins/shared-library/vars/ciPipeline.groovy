@@ -741,8 +741,8 @@ def notifyBuild(String status, String projectName) {
     def emoji = emojiMap[status] ?: ':question:'
 
     def summary = """${emoji} **${projectName}** - Build #${env.BUILD_NUMBER} **${status}**
-Branch: \`${env.BRANCH_NAME ?: 'N/A'}\`
-Commit: \`${env.GIT_COMMIT_SHORT ?: 'N/A'}\`
+Branch: '${env.BRANCH_NAME ?: 'N/A'}'
+Commit: '${env.GIT_COMMIT_SHORT ?: 'N/A'}'
 Duration: ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}
 [View Build](${env.BUILD_URL})"""
 
