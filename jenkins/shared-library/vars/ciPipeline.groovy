@@ -121,7 +121,13 @@ def call(Map config = [:]) {
                     script {
                         switch (stack) {
                             case 'node':
-                                sh 'npm ci --prefer-offline --no-audit'
+                                sh """
+                                    docker run --rm \
+                                        -v "${WORKSPACE}:/work" \
+                                        -w /work \
+                                        node:18-bullseye \
+                                        npm ci --prefer-offline --no-audit
+                                """
                                 break
                             case 'php':
                                 sh 'composer install --no-interaction --prefer-dist --optimize-autoloader'
@@ -152,7 +158,13 @@ def call(Map config = [:]) {
                     script {
                         switch (stack) {
                             case 'node':
-                                sh 'npx eslint . --format stylish || true'
+                                sh """
+                                    docker run --rm \
+                                        -v "${WORKSPACE}:/work" \
+                                        -w /work \
+                                        node:18-bullseye \
+                                        bash -lc "npx eslint . --format stylish || true"
+                                """
                                 break
                             case 'php':
                                 sh 'vendor/bin/phpstan analyse --memory-limit=512M --error-format=table || true'
@@ -182,7 +194,13 @@ def call(Map config = [:]) {
                     script {
                         switch (stack) {
                             case 'node':
-                                sh 'npx jest --ci --coverage --reporters=default --reporters=jest-junit'
+                                sh """
+                                    docker run --rm \
+                                        -v "${WORKSPACE}:/work" \
+                                        -w /work \
+                                        node:18-bullseye \
+                                        bash -lc "npx jest --ci --coverage --reporters=default --reporters=jest-junit"
+                                """
                                 break
                             case 'php':
                                 sh 'vendor/bin/phpunit --log-junit reports/junit.xml --coverage-clover reports/coverage.xml'
@@ -274,7 +292,13 @@ def call(Map config = [:]) {
                     expression { return stack == 'node' }
                 }
                 steps {
-                    sh 'npm run build'
+                    sh """
+                        docker run --rm \
+                            -v "${WORKSPACE}:/work" \
+                            -w /work \
+                            node:18-bullseye \
+                            bash -lc "npm run build"
+                    """
                 }
             }
 
@@ -746,16 +770,8 @@ Commit: '${env.GIT_COMMIT_SHORT ?: 'N/A'}'
 Duration: ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}
 [View Build](${env.BUILD_URL})"""
 
-    // Mattermost notification
-    try {
-        mattermostSend(
-            channel: 'ci-cd',
-            color: color,
-            message: summary
-        )
-    } catch (Exception e) {
-        echo "Mattermost notification failed: ${e.message}"
-    }
+    // Mattermost notification: plugin not present in this image — skip
+    echo "Mattermost notification skipped (plugin not installed)"
 
     // Email notification on failure
     if (status == 'FAILURE') {
