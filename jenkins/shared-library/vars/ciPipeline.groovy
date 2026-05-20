@@ -122,6 +122,14 @@ def call(Map config = [:]) {
                         switch (stack) {
                             case 'node':
                                 sh """
+                                    echo "=== Contenu du workspace ==="
+                                    ls -la
+                                    echo "=== package-lock.json ==="
+                                    ls -la package-lock.json || echo "PACKAGE-LOCK ABSENT"
+                                    echo "=== package.json ==="
+                                    ls -la package.json || echo "PACKAGE-JSON ABSENT"
+                                """
+                                sh """
                                     docker run --rm \
                                         -v "${WORKSPACE}:/work" \
                                         -w /work \
