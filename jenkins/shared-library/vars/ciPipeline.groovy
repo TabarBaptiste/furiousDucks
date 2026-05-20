@@ -96,8 +96,6 @@ def call(Map config = [:]) {
                             script: 'git rev-parse --short HEAD',
                             returnStdout: true
                         ).trim()
-                        // Determine the image tag: use the git tag if present,
-                        // otherwise fall back to branch-commit
                         def gitTag = sh(
                             script: 'git describe --tags --exact-match 2>/dev/null || true',
                             returnStdout: true
@@ -109,6 +107,11 @@ def call(Map config = [:]) {
                             env.IMAGE_TAG = "${safeBranch}-${env.GIT_COMMIT_SHORT}"
                         }
                         echo "Image tag: ${env.IMAGE_TAG}"
+
+                        // Translate Jenkins container path → host path for Docker volume mounts
+                        def jenkinsHomeHost = env.JENKINS_HOME_HOST ?: '/var/lib/docker/volumes/common-jenkins-data-ci/_data'
+                        env.HOST_WORKSPACE = env.WORKSPACE.replace('/var/jenkins_home', jenkinsHomeHost)
+                        echo "Host workspace: ${env.HOST_WORKSPACE}"
                     }
                 }
             }
@@ -122,23 +125,8 @@ def call(Map config = [:]) {
                         switch (stack) {
                             case 'node':
                                 sh """
-                                    echo "=== Contenu du workspace ==="
-                                    ls -la
-                                    echo "=== package-lock.json ==="
-                                    ls -la package-lock.json || echo "PACKAGE-LOCK ABSENT"
-                                    echo "=== package.json ==="
-                                    ls -la package.json || echo "PACKAGE-JSON ABSENT"
-                                """
-                                sh """
                                     docker run --rm \
-                                        -v "${WORKSPACE}:/work" \
-                                        -w /work \
-                                        node:18-bullseye \
-                                        sh -c "npm --version && head -5 package-lock.json && cat package.json"
-                                """
-                                sh """
-                                    docker run --rm \
-                                        -v "${WORKSPACE}:/work" \
+                                        -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
                                         node:18-bullseye \
                                         npm ci --prefer-offline --no-audit
@@ -175,7 +163,7 @@ def call(Map config = [:]) {
                             case 'node':
                                 sh """
                                     docker run --rm \
-                                        -v "${WORKSPACE}:/work" \
+                                        -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
                                         node:18-bullseye \
                                         bash -lc "npx eslint . --format stylish || true"
@@ -211,7 +199,7 @@ def call(Map config = [:]) {
                             case 'node':
                                 sh """
                                     docker run --rm \
-                                        -v "${WORKSPACE}:/work" \
+                                        -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
                                         node:18-bullseye \
                                         bash -lc "npx jest --ci --coverage --reporters=default --reporters=jest-junit"
@@ -309,7 +297,7 @@ def call(Map config = [:]) {
                 steps {
                     sh """
                         docker run --rm \
-                            -v "${WORKSPACE}:/work" \
+                            -v "${HOST_WORKSPACE}:/work" \
                             -w /work \
                             node:18-bullseye \
                             bash -lc "npm run build"
@@ -432,7 +420,7 @@ def call(Map config = [:]) {
                         def semgrepExit = sh(
                             script: """
                                 docker run --rm \
-                                    -v "\${WORKSPACE}:/src" \
+                                    -v "${HOST_WORKSPACE}:/src" \
                                     returntocorp/semgrep:latest \
                                     semgrep scan \
                                     --config=auto \
@@ -462,7 +450,7 @@ def call(Map config = [:]) {
                         def gitleaksExit = sh(
                             script: """
                                 docker run --rm \
-                                    -v "\${WORKSPACE}:/path" \
+                                    -v "${HOST_WORKSPACE}:/path" \
                                     zricethezav/gitleaks:latest \
                                     detect \
                                     --source=/path \
@@ -496,7 +484,7 @@ def call(Map config = [:]) {
                         if (e2eFramework == 'playwright') {
                             sh """
                                 docker run --rm \
-                                    -v "\${WORKSPACE}:/work" \
+                                    -v "\${HOST_WORKSPACE}:/work" \
                                     -w /work \
                                     --network ${traefikNetwork} \
                                     -e BASE_URL=https://${devDomain} \
@@ -507,7 +495,7 @@ def call(Map config = [:]) {
                             // Cypress
                             sh """
                                 docker run --rm \
-                                    -v "\${WORKSPACE}:/e2e" \
+                                    -v "\${HOST_WORKSPACE}:/e2e" \
                                     -w /e2e \
                                     --network ${traefikNetwork} \
                                     -e CYPRESS_BASE_URL=https://${devDomain} \
@@ -550,7 +538,7 @@ def call(Map config = [:]) {
                     script {
                         sh """
                             docker run --rm \
-                                -v "\${WORKSPACE}:/scripts" \
+                                -v "\${HOST_WORKSPACE}:/scripts" \
                                 --network ${traefikNetwork} \
                                 -e BASE_URL=https://${preprodDomain} \
                                 -e K6_VUS=${k6Vus} \

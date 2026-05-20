@@ -235,6 +235,7 @@ services:
       - JAVA_OPTS=-Xmx2g -Xms512m -Djava.awt.headless=true -Djenkins.install.runSetupWizard=false
       # CasC configuration path
       - CASC_JENKINS_CONFIG=/var/jenkins_home/casc
+      - JENKINS_HOME_HOST=/var/lib/docker/volumes/common-jenkins-data-ci/_data
     volumes:
       # Persistent Jenkins data (jobs, builds, plugins, credentials)
       - jenkins-data:/var/jenkins_home
