@@ -653,6 +653,18 @@ def call(Map config = [:]) {
                     sh 'docker image prune -f || true'
                 }
 
+                // Supprimer node_modules installés par root via Docker
+                script {
+                    if (env.HOST_WORKSPACE) {
+                        sh """
+                            docker run --rm \
+                                -v "\${HOST_WORKSPACE}:/work" \
+                                node:18-bullseye \
+                                rm -rf /work/node_modules /work/api/node_modules /work/webapp/node_modules || true
+                        """
+                    }
+                }
+
                 // Publish HTML reports if they exist
                 publishHTML(target: [
                     allowMissing         : true,
