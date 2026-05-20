@@ -134,6 +134,13 @@ def call(Map config = [:]) {
                                         -v "${WORKSPACE}:/work" \
                                         -w /work \
                                         node:18-bullseye \
+                                        sh -c "npm --version && head -5 package-lock.json && cat package.json"
+                                """
+                                sh """
+                                    docker run --rm \
+                                        -v "${WORKSPACE}:/work" \
+                                        -w /work \
+                                        node:18-bullseye \
                                         npm ci --prefer-offline --no-audit
                                 """
                                 break
