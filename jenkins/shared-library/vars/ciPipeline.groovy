@@ -166,7 +166,16 @@ def call(Map config = [:]) {
                                         -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
                                         node:18-bullseye \
-                                        bash -lc "npx eslint . --format stylish || true"
+                                        bash -lc '
+                                            for dir in api webapp; do
+                                                if [ -f "\$dir/.eslintrc.json" ] || [ -f "\$dir/.eslintrc.js" ] || [ -f "\$dir/eslint.config.js" ]; then
+                                                    echo "=== Linting \$dir ==="
+                                                    cd "\$dir"
+                                                    npx eslint "{src,apps,libs,test}/**/*.ts" --format stylish || true
+                                                    cd ..
+                                                fi
+                                            done
+                                        '
                                 """
                                 break
                             case 'php':
@@ -202,7 +211,16 @@ def call(Map config = [:]) {
                                         -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
                                         node:18-bullseye \
-                                        bash -lc "npx jest --ci --coverage --reporters=default --reporters=jest-junit"
+                                        bash -lc '
+                                            for dir in api webapp; do
+                                                if [ -f "\$dir/jest.config.js" ] || [ -f "\$dir/jest.config.ts" ]; then
+                                                    echo "=== Testing \$dir ==="
+                                                    cd "\$dir"
+                                                    npx jest --ci --coverage --reporters=default --reporters=jest-junit || true
+                                                    cd ..
+                                                fi
+                                            done
+                                        '
                                 """
                                 break
                             case 'php':
@@ -660,7 +678,7 @@ def call(Map config = [:]) {
                             docker run --rm \
                                 -v "\${HOST_WORKSPACE}:/work" \
                                 node:18-bullseye \
-                                rm -rf /work/node_modules /work/api/node_modules /work/webapp/node_modules || true
+                                rm -rf /work/node_modules /work/api/node_modules /work/webapp/node_modules /work/coverage /work/api/coverage /work/webapp/coverage || true
                         """
                     }
                 }
