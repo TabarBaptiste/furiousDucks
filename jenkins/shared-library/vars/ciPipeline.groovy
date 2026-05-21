@@ -131,6 +131,14 @@ def call(Map config = [:]) {
                                         node:18-bullseye \
                                         npm ci --prefer-offline --no-audit
                                 """
+                                // Génération du Prisma Client pour que les types TypeScript soient disponibles
+                                sh """
+                                    docker run --rm \
+                                        -v "${HOST_WORKSPACE}:/work" \
+                                        -w /work \
+                                        node:18-bullseye \
+                                        bash -c 'cd api && npx prisma generate'
+                                """
                                 break
                             case 'php':
                                 sh 'composer install --no-interaction --prefer-dist --optimize-autoloader'
@@ -259,35 +267,39 @@ def call(Map config = [:]) {
                 steps {
                     withSonarQubeEnv('SonarQube') {
                         script {
-                            def scannerArgs = """
-                                -Dsonar.projectKey=${sonarProject}
-                                -Dsonar.projectName=${sonarProject}
-                                -Dsonar.sources=.
-                                -Dsonar.host.url=\${SONAR_HOST_URL}
-                                -Dsonar.login=\${SONAR_AUTH_TOKEN}
-                            """.trim()
+                            // Construire les arguments en liste pour éviter les sauts de ligne
+                            // qui provoqueraient l'exécution d'un argument comme commande shell
+                            def sonarArgsList = [
+                                "-Dsonar.projectKey=${sonarProject}",
+                                "-Dsonar.projectName=${sonarProject}",
+                                '-Dsonar.sources=.',
+                                '-Dsonar.host.url=${SONAR_HOST_URL}',
+                                '-Dsonar.login=${SONAR_AUTH_TOKEN}'
+                            ]
 
                             switch (stack) {
                                 case 'node':
-                                    scannerArgs += """
-                                        -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
-                                        -Dsonar.testExecutionReportPaths=test-report.xml
-                                    """.trim()
+                                    sonarArgsList += [
+                                        '-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info',
+                                        '-Dsonar.testExecutionReportPaths=test-report.xml'
+                                    ]
                                     break
                                 case 'php':
-                                    scannerArgs += """
-                                        -Dsonar.php.coverage.reportPaths=reports/coverage.xml
-                                        -Dsonar.php.tests.reportPath=reports/junit.xml
-                                    """.trim()
+                                    sonarArgsList += [
+                                        '-Dsonar.php.coverage.reportPaths=reports/coverage.xml',
+                                        '-Dsonar.php.tests.reportPath=reports/junit.xml'
+                                    ]
                                     break
                                 case 'python':
-                                    scannerArgs += """
-                                        -Dsonar.python.coverage.reportPaths=reports/coverage.xml
-                                    """.trim()
+                                    sonarArgsList += [
+                                        '-Dsonar.python.coverage.reportPaths=reports/coverage.xml'
+                                    ]
                                     break
                             }
 
                             def scannerHome = tool 'SonarScanner'
+                            // Joindre tous les args avec un espace simple : aucun \n ne peut s'intercaler
+                            def scannerArgs = sonarArgsList.join(' ')
                             sh "${scannerHome}/bin/sonar-scanner ${scannerArgs}"
                         }
                     }
@@ -667,7 +679,9 @@ def call(Map config = [:]) {
         post {
             always {
                 script {
-                    node('Jenkins') {
+                    // node('') = built-in node, sans contrainte de label
+                    // node('Jenkins') échouait car le built-in node n'a pas ce label
+                    node('') {
                         // Clean up dangling Docker images to free disk space
                         sh 'docker image prune -f || true'
 
