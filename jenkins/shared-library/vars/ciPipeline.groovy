@@ -667,19 +667,21 @@ def call(Map config = [:]) {
         post {
             always {
                 script {
-                    // Clean up dangling Docker images to free disk space
-                    sh 'docker image prune -f || true'
-                }
+                    node('Jenkins') {
+                        // Clean up dangling Docker images to free disk space
+                        sh 'docker image prune -f || true'
 
-                // Supprimer node_modules installés par root via Docker
-                script {
-                    if (env.HOST_WORKSPACE) {
-                        sh """
-                            docker run --rm \
-                                -v "\${HOST_WORKSPACE}:/work" \
-                                node:18-bullseye \
-                                rm -rf /work/node_modules /work/api/node_modules /work/webapp/node_modules /work/coverage /work/api/coverage /work/webapp/coverage || true
-                        """
+                        // Supprimer les fichiers générés par root via Docker
+                        if (env.HOST_WORKSPACE) {
+                            sh """
+                                docker run --rm \
+                                    -v "\${HOST_WORKSPACE}:/work" \
+                                    node:18-bullseye \
+                                    rm -rf \
+                                        /work/node_modules /work/api/node_modules /work/webapp/node_modules \
+                                        /work/coverage /work/api/coverage /work/webapp/coverage || true
+                            """
+                        }
                     }
                 }
 
