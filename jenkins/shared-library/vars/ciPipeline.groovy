@@ -274,7 +274,9 @@ def call(Map config = [:]) {
                                 "-Dsonar.projectName=${sonarProject}",
                                 '-Dsonar.sources=.',
                                 '-Dsonar.host.url=${SONAR_HOST_URL}',
-                                '-Dsonar.login=${SONAR_AUTH_TOKEN}'
+                                '-Dsonar.login=${SONAR_AUTH_TOKEN}',
+                                '-Dsonar.javascript.node.maxspace=4096',
+                                '-Dsonar.exclusions=**/node_modules/**,**/coverage/**,**/.prisma/**,**/dist/**',
                             ]
 
                             switch (stack) {
