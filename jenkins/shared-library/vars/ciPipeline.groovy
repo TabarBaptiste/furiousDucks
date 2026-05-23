@@ -282,8 +282,8 @@ def call(Map config = [:]) {
                             switch (stack) {
                                 case 'node':
                                     sonarArgsList += [
-                                        '-Dsonar.javascript.lcov.reportPaths=coverage/lcov.info',
-                                        '-Dsonar.testExecutionReportPaths=test-report.xml'
+                                        '-Dsonar.javascript.lcov.reportPaths=api/coverage/lcov.info,webapp/coverage/lcov.info',
+                                        '-Dsonar.junit.reportPaths=api/junit.xml,webapp/junit.xml'
                                     ]
                                     break
                                 case 'php':
