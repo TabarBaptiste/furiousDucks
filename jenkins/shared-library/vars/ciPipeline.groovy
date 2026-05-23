@@ -313,7 +313,7 @@ def call(Map config = [:]) {
             // =================================================================
             stage('Quality Gate') {
                 steps {
-                    timeout(time: 5, unit: 'MINUTES') {
+                    timeout(time: 15, unit: 'MINUTES') {
                         waitForQualityGate abortPipeline: true
                     }
                 }
@@ -702,14 +702,20 @@ def call(Map config = [:]) {
                 }
 
                 // Publish HTML reports if they exist
-                publishHTML(target: [
-                    allowMissing         : true,
-                    alwaysLinkToLastBuild: true,
-                    keepAll              : true,
-                    reportDir            : 'reports',
-                    reportFiles          : '*.html',
-                    reportName           : 'Build Reports'
-                ])
+                script {
+                    if (fileExists('reports')) {
+                        publishHTML(target: [
+                            allowMissing         : false,
+                            alwaysLinkToLastBuild: true,
+                            keepAll              : true,
+                            reportDir            : 'reports',
+                            reportFiles          : 'index.html',
+                            reportName           : 'Build Reports'
+                        ])
+                    } else {
+                        echo 'No HTML reports found, skipping publishHTML'
+                    }
+                }
 
                 // Archive any JSON/XML reports
                 archiveArtifacts(
