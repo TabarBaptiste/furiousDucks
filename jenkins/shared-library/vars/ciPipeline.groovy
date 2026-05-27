@@ -128,7 +128,7 @@ def call(Map config = [:]) {
                                     docker run --rm \
                                         -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
-                                        node:18-bullseye \
+                                        node:22-bullseye \
                                         npm ci --prefer-offline --no-audit
                                 """
                                 // Génération du Prisma Client pour que les types TypeScript soient disponibles
@@ -136,7 +136,7 @@ def call(Map config = [:]) {
                                     docker run --rm \
                                         -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
-                                        node:18-bullseye \
+                                        node:22-bullseye \
                                         bash -c 'cd api && npx prisma generate'
                                 """
                                 break
@@ -173,7 +173,7 @@ def call(Map config = [:]) {
                                     docker run --rm \
                                         -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
-                                        node:18-bullseye \
+                                        node:22-bullseye \
                                         bash -lc '
                                             for dir in api webapp; do
                                                 if [ -f "\$dir/.eslintrc.json" ] || [ -f "\$dir/.eslintrc.js" ] || [ -f "\$dir/eslint.config.js" ]; then
@@ -218,7 +218,7 @@ def call(Map config = [:]) {
                                     docker run --rm \
                                         -v "${HOST_WORKSPACE}:/work" \
                                         -w /work \
-                                        node:18-bullseye \
+                                        node:22-bullseye \
                                         bash -lc '
                                             for dir in api webapp; do
                                                 if [ -f "\$dir/jest.config.js" ] || [ -f "\$dir/jest.config.ts" ]; then
@@ -331,7 +331,7 @@ def call(Map config = [:]) {
                         docker run --rm \
                             -v "${HOST_WORKSPACE}:/work" \
                             -w /work \
-                            node:18-bullseye \
+                            node:22-bullseye \
                             bash -lc "npm run build"
                     """
                 }
@@ -692,7 +692,7 @@ def call(Map config = [:]) {
                             sh """
                                 docker run --rm \
                                     -v "\${HOST_WORKSPACE}:/work" \
-                                    node:18-bullseye \
+                                    node:22-bullseye \
                                     rm -rf \
                                         /work/node_modules /work/api/node_modules /work/webapp/node_modules \
                                         /work/coverage /work/api/coverage /work/webapp/coverage || true
