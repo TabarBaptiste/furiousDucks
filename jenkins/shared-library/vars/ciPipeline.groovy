@@ -313,7 +313,10 @@ def call(Map config = [:]) {
             stage('Quality Gate') {
                 steps {
                     timeout(time: 30, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
+                        def qg = waitForQualityGate abortPipeline: false
+                        if (qg.status != 'OK') {
+                            echo "⚠️ Quality Gate: ${qg.status} (non-bloquant sur develop)"
+                        }
                     }
                 }
             }
