@@ -272,7 +272,6 @@ def call(Map config = [:]) {
                             def sonarArgsList = [
                                 "-Dsonar.projectKey=${sonarProject}",
                                 "-Dsonar.projectName=${sonarProject}",
-                                '-Dsonar.sources=.',
                                 '-Dsonar.host.url=${SONAR_HOST_URL}',
                                 '-Dsonar.login=${SONAR_AUTH_TOKEN}',
                                 '-Dsonar.javascript.node.maxspace=4096',
