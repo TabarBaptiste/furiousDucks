@@ -190,7 +190,6 @@ services:
         puma['min_threads'] = 1
         puma['max_threads'] = 4
         sidekiq['concurrency'] = 5
-        prometheus_monitoring['enable'] = false
     volumes:
       - gitlab-config:/etc/gitlab
       - gitlab-data:/var/opt/gitlab
