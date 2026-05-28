@@ -692,9 +692,9 @@ def call(Map config = [:]) {
                                 docker run --rm \
                                     -v "\${HOST_WORKSPACE}:/work" \
                                     node:22-bullseye \
-                                    rm -rf \
+                                    bash -lc 'chmod -R a+rwX \
                                         /work/node_modules /work/api/node_modules /work/webapp/node_modules \
-                                        /work/coverage /work/api/coverage /work/webapp/coverage || true
+                                        /work/coverage /work/api/coverage /work/webapp/coverage 2>/dev/null || true'
                             """
                         }
                     }
@@ -726,11 +726,7 @@ def call(Map config = [:]) {
                 cleanWs(
                     cleanWhenNotBuilt: false,
                     deleteDirs: true,
-                    disableDeferredWipeout: true,
-                    patterns: [
-                        [pattern: 'node_modules/**', type: 'EXCLUDE'],
-                        [pattern: '.venv/**', type: 'EXCLUDE']
-                    ]
+                    disableDeferredWipeout: true
                 )
             }
 
