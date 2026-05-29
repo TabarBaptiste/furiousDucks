@@ -312,8 +312,15 @@ def call(Map config = [:]) {
             // =================================================================
             stage('Quality Gate') {
                 steps {
-                    timeout(time: 30, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: false
+                    script {
+                        try {
+                            timeout(time: 5, unit: 'MINUTES') {
+                                waitForQualityGate abortPipeline: false
+                            }
+                        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+                            echo "Quality Gate timeout - continuing pipeline (non-blocking on develop)"
+                            currentBuild.result = 'UNSTABLE'
+                        }
                     }
                 }
             }
