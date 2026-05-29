@@ -728,7 +728,9 @@ def call(Map config = [:]) {
                             deleteDirs: true,
                             disableDeferredWipeout: true
                         )
-                    }
+                    }  // fin node('')
+                }  // fin script
+            }  // fin always
 
             success {
                 script {
@@ -747,7 +749,7 @@ def call(Map config = [:]) {
                     notifyBuild('UNSTABLE', projectName)
                 }
             }
-        }
+        }  // fin post
 
     } // end pipeline
 }
