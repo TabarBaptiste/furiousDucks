@@ -688,8 +688,6 @@ def call(Map config = [:]) {
         post {
             always {
                 script {
-                    // node('') = built-in node, sans contrainte de label
-                    // node('Jenkins') échouait car le built-in node n'a pas ce label
                     node('') {
                         // Clean up dangling Docker images to free disk space
                         sh 'docker image prune -f || true'
@@ -700,44 +698,37 @@ def call(Map config = [:]) {
                                 docker run --rm \
                                     -v "\${HOST_WORKSPACE}:/work" \
                                     node:22-bullseye \
-                                    bash -lc 'chmod -R a+rwX \
-                                        /work/node_modules /work/api/node_modules /work/webapp/node_modules \
-                                        /work/coverage /work/api/coverage /work/webapp/coverage \
-                                        /work/api/dist /work/webapp/.next 2>/dev/null || true'
+                                    bash -lc 'chmod -R a+rwX /work 2>/dev/null || true'
                             """
                         }
+
+                        // Publish HTML reports if they exist
+                        if (fileExists('reports')) {
+                            publishHTML(target: [
+                                allowMissing         : false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll              : true,
+                                reportDir            : 'reports',
+                                reportFiles          : 'index.html',
+                                reportName           : 'Build Reports'
+                            ])
+                        } else {
+                            echo 'No HTML reports found, skipping publishHTML'
+                        }
+
+                        // Archive any JSON/XML reports
+                        archiveArtifacts(
+                            artifacts: 'reports/**, trivy-report.json, semgrep-report.json, gitleaks-report.json',
+                            allowEmptyArchive: true
+                        )
+
+                        // Clean workspace
+                        cleanWs(
+                            cleanWhenNotBuilt: false,
+                            deleteDirs: true,
+                            disableDeferredWipeout: true
+                        )
                     }
-                }
-
-                // Publish HTML reports if they exist
-                script {
-                    if (fileExists('reports')) {
-                        publishHTML(target: [
-                            allowMissing         : false,
-                            alwaysLinkToLastBuild: true,
-                            keepAll              : true,
-                            reportDir            : 'reports',
-                            reportFiles          : 'index.html',
-                            reportName           : 'Build Reports'
-                        ])
-                    } else {
-                        echo 'No HTML reports found, skipping publishHTML'
-                    }
-                }
-
-                // Archive any JSON/XML reports
-                archiveArtifacts(
-                    artifacts: 'reports/**, trivy-report.json, semgrep-report.json, gitleaks-report.json',
-                    allowEmptyArchive: true
-                )
-
-                // Clean workspace
-                cleanWs(
-                    cleanWhenNotBuilt: false,
-                    deleteDirs: true,
-                    disableDeferredWipeout: true
-                )
-            }
 
             success {
                 script {
