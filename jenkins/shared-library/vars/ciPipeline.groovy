@@ -357,6 +357,7 @@ def call(Map config = [:]) {
                                 --build-arg VERSION=${env.IMAGE_TAG} \
                                 -t ${env.DOCKER_IMAGE}:${env.IMAGE_TAG} \
                                 -t ${env.DOCKER_IMAGE}:latest \
+                                -f webapp/Dockerfile \
                                 .
                         """
                     }
@@ -701,7 +702,8 @@ def call(Map config = [:]) {
                                     node:22-bullseye \
                                     bash -lc 'chmod -R a+rwX \
                                         /work/node_modules /work/api/node_modules /work/webapp/node_modules \
-                                        /work/coverage /work/api/coverage /work/webapp/coverage 2>/dev/null || true'
+                                        /work/coverage /work/api/coverage /work/webapp/coverage \
+                                        /work/api/dist /work/webapp/.next 2>/dev/null || true'
                             """
                         }
                     }
