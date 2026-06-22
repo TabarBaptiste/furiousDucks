@@ -24,7 +24,7 @@ services:
   # Accessible at: https://prometheus.wk-archi-o24a-4-5-g1.fr
   # ---------------------------------------------------------------------------
   prometheus:
-    image: prom/prometheus:v2.54.0
+    image: prom/prometheus:v3.5.4
     container_name: common-prometheus-ci
     restart: unless-stopped
     command:
@@ -158,7 +158,7 @@ services:
   # Internal only - receives alerts from Prometheus
   # ---------------------------------------------------------------------------
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.33.0
     container_name: common-alertmanager-ci
     restart: unless-stopped
     command:
@@ -178,7 +178,7 @@ services:
   # Internal only - scraped by Prometheus for OS/hardware metrics
   # ---------------------------------------------------------------------------
   node-exporter:
-    image: prom/node-exporter:v1.8.2
+    image: prom/node-exporter:v1.11.1
     container_name: common-node-exporter-ci
     restart: unless-stopped
     command:
