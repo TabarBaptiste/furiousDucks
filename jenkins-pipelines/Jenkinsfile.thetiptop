@@ -11,10 +11,12 @@
 
 @Library('furious-ducks-shared-library') _
 
+def projectName = 'thetiptop'
+
 ciPipeline(
-    projectName   : 'thetiptop',
+    projectName   : projectName,
     stack         : 'node',
-    sonarProject  : 'thetiptop',
+    sonarProject  : projectName,
 
     // Deployment toggles
     deployDev     : true,
@@ -26,9 +28,9 @@ ciPipeline(
     runK6         : true,
 
     // Domains (one per environment)
-    devDomain     : 'thetiptop-dev.wk-archi-o24a-4-5-g1.fr',
-    preprodDomain : 'thetiptop-preprod.wk-archi-o24a-4-5-g1.fr',
-    prodDomain    : 'thetiptop.wk-archi-o24a-4-5-g1.fr',
+    devDomain     : "${projectName}-dev.wk-archi-o24a-4-5-g1.fr",
+    preprodDomain : "${projectName}-preprod.wk-archi-o24a-4-5-g1.fr",
+    prodDomain    : "${projectName}.wk-archi-o24a-4-5-g1.fr",
 
     // Application port
     appPort       : 3000,

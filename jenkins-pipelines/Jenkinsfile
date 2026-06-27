@@ -7,13 +7,16 @@
 //
 // Available stacks: 'node', 'php', 'python', 'ruby'
 // =============================================================================
+/* groovylint-disable CompileStatic, NoDef, UnusedVariable, VariableName, VariableTypeRequired */
 
 @Library('furious-ducks-shared-library') _
 
+def projectName = 'my-project'
+
 ciPipeline(
-    projectName   : 'my-project',
+    projectName   : projectName,
     stack         : 'node',         // 'node', 'php', 'python', 'ruby'
-    sonarProject  : 'my-project',
+    sonarProject  : projectName,
 
     // Deployment toggles
     deployDev     : true,
@@ -25,9 +28,9 @@ ciPipeline(
     runK6         : true,
 
     // Domains (one per environment)
-    devDomain     : 'my-project-dev.wk-archi-o24a-4-5-g1.fr',
-    preprodDomain : 'my-project-preprod.wk-archi-o24a-4-5-g1.fr',
-    prodDomain    : 'my-project.wk-archi-o24a-4-5-g1.fr',
+    devDomain     : "${projectName}-dev.wk-archi-o24a-4-5-g1.fr",
+    preprodDomain : "${projectName}-preprod.wk-archi-o24a-4-5-g1.fr",
+    prodDomain    : "${projectName}.wk-archi-o24a-4-5-g1.fr",
 
     // Application port exposed by the Docker container
     appPort       : 3000
