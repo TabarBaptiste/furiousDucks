@@ -12,18 +12,10 @@
 # =============================================================================
 # Shared configuration applied to all notification integrations.
 global:
-  # SMTP relay used to send email notifications.
-  smtp_smarthost: '<SMTP_HOST>:<SMTP_PORT>'
-
-  # Sender address shown in alert emails.
-  smtp_from: 'alertmanager@wk-archi-o24a-4-5-g1.fr'
-
-  # SMTP authentication credentials.
-  smtp_auth_username: '<SMTP_USERNAME>'
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'nomaworkecoworking@gmail.com'
+  smtp_auth_username: 'nomaworkecoworking@gmail.com'
   smtp_auth_password: '***REMOVED***'
-
-  # Set to false if the SMTP relay uses a valid TLS certificate.
-  # Set to true only in development or when using self-signed certificates.
   smtp_require_tls: true
 
 # =============================================================================
@@ -87,7 +79,7 @@ receivers:
   # Sends warning-level alerts via email to the DevOps team.
   - name: default-receiver
     email_configs:
-      - to: 'devops@wk-archi-o24a-4-5-g1.fr'
+      - to: 'nomaworkecoworking@gmail.com'
         send_resolved: true
         headers:
           Subject: '[WARNING] {{ .GroupLabels.alertname }} - AlertManager'
@@ -96,26 +88,15 @@ receivers:
   # Critical Receiver
   # ---------------------------------------------------------------------------
   # Sends critical alerts via email AND Mattermost to ensure rapid response.
-  # Mattermost incoming webhooks are Slack-compatible, so slack_configs is used.
   - name: critical-receiver
     email_configs:
-      - to: 'devops@wk-archi-o24a-4-5-g1.fr'
+      - to: 'nomaworkecoworking@gmail.com'
         send_resolved: true
         headers:
           Subject: '[CRITICAL] {{ .GroupLabels.alertname }} - AlertManager'
-
-    slack_configs:
-      - api_url: '${MATTERMOST_WEBHOOK_URL}'
-        channel: 'devops-alerts'
+    webhook_configs:
+      - url: '${MATTERMOST_WEBHOOK_URL}'
         send_resolved: true
-        title: '{{ if eq .Status "firing" }}FIRING{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
-        text: >-
-          *Severity:* {{ .CommonLabels.severity }}
-          *Description:* {{ .CommonAnnotations.description }}
-          *Details:*
-          {{ range .Alerts }}
-            - *{{ .Labels.alertname }}* on {{ .Labels.instance }}
-          {{ end }}
 
 # =============================================================================
 # Inhibition Rules

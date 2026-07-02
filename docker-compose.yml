@@ -359,6 +359,74 @@ services:
       retries: 5
       start_period: 30s
 
+  #############################################################################
+  # MATTERMOST - Team Communication & Alert Notifications
+  # URL: https://chat.wk-archi-o24a-4-5-g1.fr
+  # Used for team chat and as a receiver for AlertManager critical alerts
+  # via an incoming webhook (see infrastructure/alertmanager/alertmanager.yml).
+  #############################################################################
+  mattermost:
+    image: mattermost/mattermost-team-edition:11.8
+    container_name: common-mattermost-ci
+    restart: unless-stopped
+    environment:
+      - MM_SQLSETTINGS_DRIVERNAME=postgres
+      - MM_SQLSETTINGS_DATASOURCE=postgres://${MATTERMOST_DB_USER:-mattermost}:${MATTERMOST_DB_PASSWORD}@mattermost-db:5432/${MATTERMOST_DB_NAME:-mattermost}?sslmode=disable
+      - MM_SERVICESETTINGS_SITEURL=https://chat.wk-archi-o24a-4-5-g1.fr
+      - MM_SERVICESETTINGS_ENABLELOCALMODE=true
+    volumes:
+      - mattermost-data:/mattermost/data
+      - mattermost-logs:/mattermost/logs
+      - mattermost-config:/mattermost/config
+      - mattermost-plugins:/mattermost/plugins
+      - mattermost-client-plugins:/mattermost/client/plugins
+    labels:
+      # Enable Traefik routing
+      - "traefik.enable=true"
+      # --- HTTP router ---
+      - "traefik.http.routers.mattermost.rule=Host(`chat.wk-archi-o24a-4-5-g1.fr`)"
+      - "traefik.http.routers.mattermost.entrypoints=websecure"
+      - "traefik.http.routers.mattermost.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mattermost.middlewares=secure-headers@file"
+      - "traefik.http.services.mattermost.loadbalancer.server.port=8065"
+    networks:
+      - ci_network
+      - workflow-network
+    depends_on:
+      mattermost-db:
+        condition: service_healthy
+      traefik:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/mattermost/bin/mattermost", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  #############################################################################
+  # MATTERMOST DATABASE - PostgreSQL
+  # Internal service, not exposed via Traefik.
+  #############################################################################
+  mattermost-db:
+    image: postgres:16-alpine
+    container_name: common-mattermost-db-ci
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${MATTERMOST_DB_NAME:-mattermost}
+      - POSTGRES_USER=${MATTERMOST_DB_USER:-mattermost}
+      - POSTGRES_PASSWORD=${MATTERMOST_DB_PASSWORD}
+    volumes:
+      - mattermost-db-data:/var/lib/postgresql/data
+    networks:
+      - ci_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MATTERMOST_DB_USER:-mattermost} -d ${MATTERMOST_DB_NAME:-mattermost}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 ###############################################################################
 # VOLUMES
 # Named volumes for persistent data across container restarts and upgrades.
@@ -387,6 +455,22 @@ volumes:
   # SonarQube PostgreSQL
   sonarqube-db-data:
     name: common-sonarqube-db-data-ci
+
+  # Mattermost
+  mattermost-data:
+    name: common-mattermost-data-ci
+  mattermost-logs:
+    name: common-mattermost-logs-ci
+  mattermost-config:
+    name: common-mattermost-config-ci
+  mattermost-plugins:
+    name: common-mattermost-plugins-ci
+  mattermost-client-plugins:
+    name: common-mattermost-client-plugins-ci
+
+  # Mattermost PostgreSQL
+  mattermost-db-data:
+    name: common-mattermost-db-data-ci
 
 ###############################################################################
 # NETWORKS

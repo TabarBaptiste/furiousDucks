@@ -66,12 +66,15 @@ scrape_configs:
   # ---------------------------------------------------------------------------
   # 4. Traefik (Reverse Proxy / Load Balancer)
   # ---------------------------------------------------------------------------
-  # Exposes request rates, latencies, and backend health.
+  # Traefik exposes metrics on the websecure entrypoint (443), not on 8080.
   - job_name: traefik
     metrics_path: /metrics
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
     static_configs:
       - targets:
-          - common-traefik-ci:8080
+          - common-traefik-ci:443
 
   # ---------------------------------------------------------------------------
   # 5. Jenkins (CI Server)
@@ -98,11 +101,10 @@ scrape_configs:
   # ---------------------------------------------------------------------------
   # 7. SonarQube (Code Quality)
   # ---------------------------------------------------------------------------
-  # Exposes analysis queue, compute engine, and database connection metrics.
-  # Note: Requires the Monitoring plugin or built-in metrics endpoint to be
-  # enabled (available in SonarQube Developer Edition and above, or via plugin).
+  # /api/monitoring/metrics requires Developer Edition. Community Edition only
+  # exposes a basic health probe at /api/system/status (HTTP 200 = up).
   - job_name: sonarqube
-    metrics_path: /api/monitoring/metrics
+    metrics_path: /api/system/status
     static_configs:
       - targets:
           - common-sonarqube-ci:9000
@@ -111,8 +113,10 @@ scrape_configs:
   # 8. MinIO (Object Storage)
   # ---------------------------------------------------------------------------
   # Exposes bucket usage, request rates, and replication metrics.
+  # Bearer token generated via: mc admin prometheus generate local
   - job_name: minio
     metrics_path: /minio/v2/metrics/cluster
+    bearer_token: ***REMOVED***
     static_configs:
       - targets:
           - common-minio-ci:9000

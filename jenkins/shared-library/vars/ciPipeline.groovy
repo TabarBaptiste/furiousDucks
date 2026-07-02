@@ -214,6 +214,18 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Gitleaks (Secret Detection)
+            // =================================================================
+            stage('Gitleaks') {
+                when {
+                    anyOf { branch 'main'; branch 'develop' }
+                }
+                steps {
+                    runGitleaks(env.HOST_WORKSPACE)
+                }
+            }
+
+            // =================================================================
             // STAGE: Deploy DEV
             // =================================================================
             stage('Deploy DEV') {
@@ -242,18 +254,6 @@ void call(Map config = [:]) {
                 }
                 steps {
                     runSemgrep(env.HOST_WORKSPACE)
-                }
-            }
-
-            // =================================================================
-            // STAGE: Gitleaks (Secret Detection)
-            // =================================================================
-            stage('Gitleaks') {
-                when {
-                    branch 'main'
-                }
-                steps {
-                    runGitleaks(env.HOST_WORKSPACE)
                 }
             }
 
