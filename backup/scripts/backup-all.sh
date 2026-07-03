@@ -13,6 +13,7 @@
 # Optional environment variables:
 #   WEBHOOK_URL        - URL to send failure notifications (default: placeholder)
 #   LOG_DIR            - Directory for log files (default: /var/log/backup)
+#   TEXTFILE_DIR       - node-exporter textfile dir for Prometheus metrics (default: /textfiles)
 ###############################################################################
 set -euo pipefail
 
@@ -22,6 +23,7 @@ set -euo pipefail
 WEBHOOK_URL="${WEBHOOK_URL:-https://chat.wk-archi-o24a-4-5-g1.fr/hooks/CHANGE_ME}"
 LOG_DIR="${LOG_DIR:-/var/log/backup}"
 LOG_FILE="${LOG_DIR}/backup-$(date +%Y%m%d-%H%M%S).log"
+TEXTFILE_DIR="${TEXTFILE_DIR:-/textfiles}"
 # Volumes are mounted read-only under /backup-sources/ in the container
 # (see docker-compose.backup.yml)
 VOLUMES_BASE="${VOLUMES_BASE:-/backup-sources}"
@@ -34,6 +36,7 @@ declare -A BACKUP_TARGETS=(
   ["prometheus-data"]="prometheus"
   ["grafana-data"]="grafana"
   ["sonarqube-data"]="sonarqube"
+  ["sonarqube-db-data"]="sonarqube-db"
 )
 
 # ---------------------------------------------------------------------------
@@ -136,6 +139,42 @@ for volume in "${!BACKUP_TARGETS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Prometheus metrics (node-exporter textfile collector)
+# Writes backup_last_status and backup_last_success_timestamp_seconds so that
+# the BackupFailed / BackupTooOld alerts in Prometheus actually fire.
+# ---------------------------------------------------------------------------
+push_metrics() {
+  local status="$1"   # 0 = success, 1 = failure
+  local now
+  now="$(date +%s)"
+
+  if [[ ! -d "${TEXTFILE_DIR}" ]]; then
+    log "WARN" "TEXTFILE_DIR '${TEXTFILE_DIR}' not found — Prometheus metrics not written"
+    return 0
+  fi
+
+  # Write atomically: write to tmp then rename to avoid partial reads by node-exporter
+  local tmp
+  tmp="$(mktemp "${TEXTFILE_DIR}/backup.prom.XXXXXX")"
+  cat > "${tmp}" <<PROM
+# HELP backup_last_status Status of the last backup job (0=success, 1=failure)
+# TYPE backup_last_status gauge
+backup_last_status{job="restic"} ${status}
+# HELP backup_last_success_timestamp_seconds Unix timestamp of the last successful backup
+# TYPE backup_last_success_timestamp_seconds gauge
+backup_last_success_timestamp_seconds{job="restic"} $( [[ "${status}" -eq 0 ]] && echo "${now}" || cat "${TEXTFILE_DIR}/backup_last_success_ts" 2>/dev/null || echo "0" )
+PROM
+
+  # Persist the success timestamp separately so failures don't erase it
+  if [[ "${status}" -eq 0 ]]; then
+    echo "${now}" > "${TEXTFILE_DIR}/backup_last_success_ts"
+  fi
+
+  mv "${tmp}" "${TEXTFILE_DIR}/backup.prom"
+  log "INFO" "Prometheus metrics written to ${TEXTFILE_DIR}/backup.prom (status=${status})"
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 BACKUP_END="$(date +%s)"
@@ -146,8 +185,10 @@ log "INFO" "Duration: ${TOTAL_DURATION}s | Succeeded: ${SUCCEEDED} | Failed: ${F
 
 if [[ ${FAILED} -gt 0 ]]; then
   notify_failure "${FAILED} volume(s) failed to back up. Succeeded: ${SUCCEEDED}. Duration: ${TOTAL_DURATION}s."
+  push_metrics 1
   exit 1
 fi
 
 log "INFO" "All backups completed successfully"
+push_metrics 0
 exit 0

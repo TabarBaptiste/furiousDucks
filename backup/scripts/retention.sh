@@ -2,10 +2,11 @@
 ###############################################################################
 # retention.sh - Furious Ducks Backup Retention Policy
 #
-# Applies the retention policy to the Restic backup repository:
-#   - Keep last 14 daily snapshots
-#   - Keep last 8 weekly snapshots
-#   - Keep last 12 monthly snapshots
+# Politique Grandfather-Father-Son (section 3.4 du cahier des specs) :
+#   - Keep last 7 daily snapshots
+#   - Keep last 4 weekly snapshots
+#   - Keep last 6 monthly snapshots
+#   - Keep last 2 yearly snapshots
 #
 # Prunes unreferenced data and verifies repository integrity after cleanup.
 #
@@ -28,10 +29,11 @@ LOG_DIR="${LOG_DIR:-/var/log/backup}"
 LOG_FILE="${LOG_DIR}/retention-$(date +%Y%m%d-%H%M%S).log"
 DRY_RUN="${DRY_RUN:-false}"
 
-# Retention policy
-KEEP_DAILY=14
-KEEP_WEEKLY=8
-KEEP_MONTHLY=12
+# Retention policy — GFS (Grandfather-Father-Son)
+KEEP_DAILY=7
+KEEP_WEEKLY=4
+KEEP_MONTHLY=6
+KEEP_YEARLY=2
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,7 +85,7 @@ export RESTIC_PASSWORD
 # Count snapshots before cleanup
 # ---------------------------------------------------------------------------
 log "INFO" "========== Retention Cleanup Started =========="
-log "INFO" "Policy: keep-daily=${KEEP_DAILY}, keep-weekly=${KEEP_WEEKLY}, keep-monthly=${KEEP_MONTHLY}"
+log "INFO" "Policy: keep-daily=${KEEP_DAILY}, keep-weekly=${KEEP_WEEKLY}, keep-monthly=${KEEP_MONTHLY}, keep-yearly=${KEEP_YEARLY}"
 
 SNAPSHOTS_BEFORE="$(restic snapshots --json 2>/dev/null | grep -c '"short_id"' || echo 0)"
 log "INFO" "Snapshots before cleanup: ${SNAPSHOTS_BEFORE}"
@@ -95,6 +97,7 @@ FORGET_FLAGS=(
   --keep-daily "${KEEP_DAILY}"
   --keep-weekly "${KEEP_WEEKLY}"
   --keep-monthly "${KEEP_MONTHLY}"
+  --keep-yearly "${KEEP_YEARLY}"
   --prune
   --verbose
 )

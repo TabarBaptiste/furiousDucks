@@ -193,10 +193,12 @@ services:
       - "--path.rootfs=/rootfs"
       - "--path.sysfs=/host/sys"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      - "--collector.textfile.directory=/var/lib/node_exporter/textfiles"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      - /opt/furious-ducks/infrastructure/node-exporter/textfiles:/var/lib/node_exporter/textfiles:ro
     networks:
       - ci_network
       - monitoring_network

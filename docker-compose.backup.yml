@@ -92,8 +92,11 @@ services:
       - prometheus-data:/backup-sources/prometheus-data:ro
       - grafana-data:/backup-sources/grafana-data:ro
       - sonarqube-data:/backup-sources/sonarqube-data:ro
+      - sonarqube-db-data:/backup-sources/sonarqube-db-data:ro
       # --- Backup scripts ---
       - ./backup/scripts:/scripts:ro
+      # --- Prometheus textfile metrics (shared with node-exporter) ---
+      - /opt/furious-ducks/infrastructure/node-exporter/textfiles:/textfiles
     networks:
       - backup_network
     depends_on:
@@ -179,4 +182,7 @@ volumes:
     external: true
   sonarqube-data:
     name: common-sonarqube-data-ci
+    external: true
+  sonarqube-db-data:
+    name: common-sonarqube-db-data-ci
     external: true
