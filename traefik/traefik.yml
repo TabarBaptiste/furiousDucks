@@ -37,6 +37,11 @@ entryPoints:
   websecure:
     address: ":443"
 
+  # Internal-only entrypoint for Prometheus metrics. Not published on the
+  # host; reachable only from other containers on ci_network.
+  metrics:
+    address: ":8082"
+
 # -----------------------------------------------------------------------------
 # Providers
 # -----------------------------------------------------------------------------
@@ -79,4 +84,4 @@ accessLog:
 # -----------------------------------------------------------------------------
 metrics:
   prometheus:
-    entryPoint: websecure
+    entryPoint: metrics

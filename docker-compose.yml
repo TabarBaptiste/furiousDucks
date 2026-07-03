@@ -179,6 +179,9 @@ services:
         ## Email configuration (customize via .env)
         gitlab_rails['smtp_enable'] = false
 
+        ## Allow Prometheus (on ci_network) to scrape /-/metrics
+        gitlab_rails['monitoring_whitelist'] = ['127.0.0.0/8', '172.16.0.0/12']
+
         ## Disable unused services to reduce resource consumption
         prometheus_monitoring['enable'] = false
         # grafana['enable'] = false  # Not supported in GitLab 17.4

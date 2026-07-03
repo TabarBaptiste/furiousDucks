@@ -113,21 +113,14 @@ groups:
     rules:
 
       # -----------------------------------------------------------------------
-      # Container down: a managed container has stopped unexpectedly.
-      # -----------------------------------------------------------------------
-      - alert: ContainerDown
-        expr: >
-          absent(container_last_seen{name=~".+"})
-          or (time() - container_last_seen{name=~".+"}) > 60
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Container {{ $labels.name }} is down"
-          description: >
-            Container {{ $labels.name }} on {{ $labels.instance }} has not been
-            seen for more than 1 minute.
-
+      # NOTE: ContainerDown was removed. It relied on the cAdvisor "name"
+      # label (container_last_seen{name=~".+"}), which cAdvisor never
+      # populates on this host: Docker 29's containerd-snapshotter storage
+      # backend isn't supported by cAdvisor's Docker container handler
+      # (confirmed on both v0.49.1 and v0.52.1 - see manager.go:1116 errors
+      # "failed to identify the read-write layer ID"). Individual service
+      # availability is covered instead by JenkinsDown, GitLabDown, etc.
+      # below, plus each container's own Docker healthcheck + restart policy.
       # -----------------------------------------------------------------------
       # Container CPU: sustained high CPU may starve other containers sharing
       # the same host.
@@ -209,20 +202,6 @@ groups:
           description: >
             The GitLab instance (job={{ $labels.job }}) has been unreachable
             for more than 2 minutes. Source code management is unavailable.
-
-      # -----------------------------------------------------------------------
-      # SonarQube down: blocks quality gate checks but does not halt builds.
-      # -----------------------------------------------------------------------
-      - alert: SonarQubeDown
-        expr: up{job="sonarqube"} == 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "SonarQube is unreachable"
-          description: >
-            The SonarQube instance (job={{ $labels.job }}) has been unreachable
-            for more than 5 minutes. Quality gate checks will fail.
 
       # -----------------------------------------------------------------------
       # Traefik error rate: a high 5xx rate indicates upstream service failures

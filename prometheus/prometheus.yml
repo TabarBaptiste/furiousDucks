@@ -66,15 +66,13 @@ scrape_configs:
   # ---------------------------------------------------------------------------
   # 4. Traefik (Reverse Proxy / Load Balancer)
   # ---------------------------------------------------------------------------
-  # Traefik exposes metrics on the websecure entrypoint (443), not on 8080.
+  # Traefik exposes metrics on its dedicated internal "metrics" entrypoint
+  # (:8082), not on the public websecure entrypoint or the api/dashboard port.
   - job_name: traefik
     metrics_path: /metrics
-    scheme: https
-    tls_config:
-      insecure_skip_verify: true
     static_configs:
       - targets:
-          - common-traefik-ci:443
+          - common-traefik-ci:8082
 
   # ---------------------------------------------------------------------------
   # 5. Jenkins (CI Server)
@@ -101,13 +99,10 @@ scrape_configs:
   # ---------------------------------------------------------------------------
   # 7. SonarQube (Code Quality)
   # ---------------------------------------------------------------------------
-  # /api/monitoring/metrics requires Developer Edition. Community Edition only
-  # exposes a basic health probe at /api/system/status (HTTP 200 = up).
-  - job_name: sonarqube
-    metrics_path: /api/system/status
-    static_configs:
-      - targets:
-          - common-sonarqube-ci:9000
+  # NOTE: /api/monitoring/metrics (Prometheus format) requires Developer
+  # Edition and is not available in Community Edition. /api/system/status
+  # returns JSON, which Prometheus cannot scrape as a metric. Container-level
+  # availability is covered instead by the ContainerDown alert (cAdvisor).
 
   # ---------------------------------------------------------------------------
   # 8. MinIO (Object Storage)
