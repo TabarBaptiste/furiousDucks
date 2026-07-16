@@ -19,7 +19,7 @@
 //       domain        : 'my-app.wk-archi-o24a-4-5-g1.fr',
 //       port          : 3000,
 //       registry      : 'registry.wk-archi-o24a-4-5-g1.fr',
-//       traefikNetwork: 'traefik-public',
+//       traefikNetwork: 'workflow-network',
 //       monitorMinutes: 15
 //   )
 // =============================================================================
@@ -45,7 +45,7 @@ def call(Map config) {
     def domain         = config.domain
     def port           = config.port
     def registry       = config.registry       ?: 'registry.wk-archi-o24a-4-5-g1.fr'
-    def traefikNetwork = config.traefikNetwork ?: 'traefik-public'
+    def traefikNetwork = config.traefikNetwork ?: 'workflow-network'
     def monitorMinutes = config.monitorMinutes ?: (environment == 'prod' ? 15 : 0)
     def healthPath     = config.healthPath     ?: '/health'
     def healthTimeout  = config.healthTimeout  ?: 60   // seconds
@@ -54,6 +54,7 @@ def call(Map config) {
     def fullImage      = "${registry}/${projectName}:${imageTag}"
     def blueContainer  = "${projectName}-${environment}-blue"
     def greenContainer = "${projectName}-${environment}-green"
+    def previousTag    = ''
     def routerName     = "${projectName}-${environment}"
 
     echo "=== Blue/Green Deployment ==="
@@ -171,6 +172,7 @@ def call(Map config) {
                 --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
                 --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
                 --label "traefik.http.routers.${routerName}.middlewares=security-headers@file" \
+                --label "deploy.tag=${imageTag}" \
                 -e NODE_ENV=production \
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
@@ -198,50 +200,79 @@ def call(Map config) {
             def checkInterval  = 30  // check every 30 seconds
             def checks         = (monitorSeconds / checkInterval).intValue()
 
-            sh """
-                FAILURES=0
-                MAX_FAILURES=3
+            try {
+                sh """
+                    FAILURES=0
+                    MAX_FAILURES=3
 
-                for i in \$(seq 1 ${checks}); do
-                    # Check container health
-                    STATUS=\$(docker inspect --format='{{.State.Health.Status}}' ${greenContainer} 2>/dev/null || echo "unknown")
+                    for i in \$(seq 1 ${checks}); do
+                        # Check container health
+                        STATUS=\$(docker inspect --format='{{.State.Health.Status}}' ${greenContainer} 2>/dev/null || echo "unknown")
 
-                    # Check HTTP response
-                    HTTP_CODE=\$(docker exec ${greenContainer} curl -sf -o /dev/null -w '%{http_code}' http://localhost:${port}${healthPath} 2>/dev/null || echo "000")
+                        # Check HTTP response
+                        HTTP_CODE=\$(docker exec ${greenContainer} curl -sf -o /dev/null -w '%{http_code}' http://localhost:${port}${healthPath} 2>/dev/null || echo "000")
 
-                    ELAPSED=\$(( i * ${checkInterval} ))
-                    echo "  [\${ELAPSED}/${monitorSeconds}s] health=\${STATUS} http=\${HTTP_CODE}"
+                        ELAPSED=\$(( i * ${checkInterval} ))
+                        echo "  [\${ELAPSED}/${monitorSeconds}s] health=\${STATUS} http=\${HTTP_CODE}"
 
-                    if [ "\$STATUS" != "healthy" ] || [ "\$HTTP_CODE" != "200" ]; then
-                        FAILURES=\$((FAILURES + 1))
-                        echo "  WARNING: Check failed (\${FAILURES}/\${MAX_FAILURES})"
+                        if [ "\$STATUS" != "healthy" ] || [ "\$HTTP_CODE" != "200" ]; then
+                            FAILURES=\$((FAILURES + 1))
+                            echo "  WARNING: Check failed (\${FAILURES}/\${MAX_FAILURES})"
 
-                        if [ "\$FAILURES" -ge "\$MAX_FAILURES" ]; then
-                            echo "ERROR: Too many failures during monitoring - initiating rollback"
-                            exit 1
+                            if [ "\$FAILURES" -ge "\$MAX_FAILURES" ]; then
+                                echo "ERROR: Too many failures during monitoring - initiating rollback"
+                                exit 1
+                            fi
+                        else
+                            # Reset failure counter on success
+                            FAILURES=0
                         fi
-                    else
-                        # Reset failure counter on success
-                        FAILURES=0
-                    fi
 
-                    sleep ${checkInterval}
-                done
+                        sleep ${checkInterval}
+                    done
 
-                echo "Monitoring complete - GREEN is stable"
-            """
+                    echo "Monitoring complete - GREEN is stable"
+                """
+            } catch (err) {
+                // BLUE was never stopped or relabeled during the traffic switch,
+                // so it is still live and serving traffic: removing the failing
+                // GREEN is enough to restore full service on BLUE.
+                echo "GREEN failed monitoring - rolling back to BLUE (${blueContainer})"
+                sh """
+                    docker stop ${greenContainer} 2>/dev/null || true
+                    docker rm   ${greenContainer} 2>/dev/null || true
+                """
+                error("Blue/Green deployment for ${projectName} (${environment}) failed monitoring and was rolled back to BLUE (${blueContainer})")
+            }
         }
     }
 
     // -------------------------------------------------------------------------
-    // Step 6: Stop BLUE container
+    // Step 6: Pause old BLUE container as a rollback standby
     // -------------------------------------------------------------------------
-    stage("B/G - Stop BLUE") {
-        echo "Stopping old BLUE container..."
+    // Kept stopped (not removed) for one generation, so rollback.sh can
+    // restart it directly instead of pulling the image again from Harbor.
+    stage("B/G - Pause BLUE") {
+        echo "Pausing old BLUE container as rollback standby..."
+
+        // Capture the tag currently running on BLUE before touching it, so the
+        // new BLUE can be labeled with it (rollback.sh reads this to auto-detect
+        // the tag to roll back to, without the operator having to know it).
+        previousTag = sh(
+            script: "docker inspect --format='{{index .Config.Labels \"deploy.tag\"}}' ${blueContainer} 2>/dev/null || true",
+            returnStdout: true
+        ).trim()
+        if (previousTag == '<no value>') {
+            previousTag = ''
+        }
+
         sh """
-            docker stop  ${blueContainer} 2>/dev/null || true
-            docker rm    ${blueContainer} 2>/dev/null || true
-            echo "BLUE container stopped and removed"
+            # Drop the standby from two releases ago - we only keep one generation back
+            docker rm -f ${blueContainer}-previous 2>/dev/null || true
+
+            docker stop ${blueContainer} 2>/dev/null || true
+            docker rename ${blueContainer} ${blueContainer}-previous 2>/dev/null || true
+            echo "BLUE container paused as ${blueContainer}-previous"
         """
     }
 
@@ -273,6 +304,8 @@ def call(Map config) {
                 --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
                 --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
                 --label "traefik.http.routers.${routerName}.middlewares=security-headers@file" \
+                --label "deploy.tag=${imageTag}" \
+                --label "deploy.previous-tag=${previousTag}" \
                 -e NODE_ENV=production \
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
@@ -309,7 +342,7 @@ def rollback(Map config) {
     def domain         = config.domain
     def port           = config.port       ?: 3000
     def registry       = config.registry   ?: 'registry.wk-archi-o24a-4-5-g1.fr'
-    def traefikNetwork = config.traefikNetwork ?: 'traefik-public'
+    def traefikNetwork = config.traefikNetwork ?: 'workflow-network'
 
     def blueContainer  = "${projectName}-${environment}-blue"
     def greenContainer = "${projectName}-${environment}-green"

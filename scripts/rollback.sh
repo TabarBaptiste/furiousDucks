@@ -14,7 +14,9 @@
 #   PREVIOUS_TAG   Image tag to roll back to (optional, auto-detected if omitted)
 #
 # Options:
-#   --with-db      Also rollback the database (requires DB backup)
+#   --with-db      Also rollback the database (requires DB backup).
+#                  PostgreSQL only for now (only DB engine used by
+#                  the current pilot project, The Tip Top).
 #   --help, -h     Show help message
 #
 # Required environment variables:
@@ -114,7 +116,7 @@ fi
 case "${ENVIRONMENT}" in
   dev)     CONTAINER_NAME="${PROJECT_NAME}-dev" ;;
   preprod) CONTAINER_NAME="${PROJECT_NAME}-preprod" ;;
-  prod)    CONTAINER_NAME="${PROJECT_NAME}-blue" ;;
+  prod)    CONTAINER_NAME="${PROJECT_NAME}-prod-blue" ;;
 esac
 
 log "INFO" "========== Rollback Started =========="
@@ -285,14 +287,16 @@ case "${ENVIRONMENT}" in
   prod)
     log "INFO" "Performing Blue/Green rollback for PROD..."
 
-    BLUE_NAME="${PROJECT_NAME}-blue"
-    GREEN_NAME="${PROJECT_NAME}-green"
+    BLUE_NAME="${PROJECT_NAME}-${ENVIRONMENT}-blue"
+    GREEN_NAME="${PROJECT_NAME}-${ENVIRONMENT}-green"
+    ROUTER_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+    PAUSED_NAME="${BLUE_NAME}-previous"
 
     # Get the current domain from BLUE container Traefik labels
-    DOMAIN="$(docker inspect --format='{{index .Config.Labels "traefik.http.routers.'"${PROJECT_NAME}"'.rule"}}' "${BLUE_NAME}" 2>/dev/null || echo '')"
+    DOMAIN="$(docker inspect --format='{{index .Config.Labels "traefik.http.routers.'"${ROUTER_NAME}"'.rule"}}' "${BLUE_NAME}" 2>/dev/null || echo '')"
     # Extract domain from Host(`...`) rule
     DOMAIN="$(echo "${DOMAIN}" | grep -o '`[^`]*`' | tr -d '`' || echo '')"
-    APP_PORT="$(docker inspect --format='{{index .Config.Labels "traefik.http.services.'"${PROJECT_NAME}"'.loadbalancer.server.port"}}' "${BLUE_NAME}" 2>/dev/null || echo '8080')"
+    APP_PORT="$(docker inspect --format='{{index .Config.Labels "traefik.http.services.'"${ROUTER_NAME}"'.loadbalancer.server.port"}}' "${BLUE_NAME}" 2>/dev/null || echo '8080')"
 
     if [[ -z "${DOMAIN}" ]]; then
       log "ERROR" "Could not determine domain from BLUE container labels"
@@ -302,110 +306,161 @@ case "${ENVIRONMENT}" in
 
     log "INFO" "Domain: ${DOMAIN}, Port: ${APP_PORT}"
 
-    # Remove any leftover GREEN container
-    if docker ps -aq -f "name=${GREEN_NAME}" | grep -q .; then
-      docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
+    # -----------------------------------------------------------------------
+    # Fast path: a paused standby from the previous deploy is on standby
+    # (deployBlueGreen.groovy keeps one generation back instead of deleting
+    # it). Reuse it directly instead of pulling from the registry.
+    # -----------------------------------------------------------------------
+    USE_FAST_PATH=false
+    if docker ps -aq -f "name=${PAUSED_NAME}" | grep -q .; then
+      PAUSED_TAG="$(docker inspect --format='{{index .Config.Labels "deploy.tag"}}' "${PAUSED_NAME}" 2>/dev/null || echo '')"
+      if [[ "${PAUSED_TAG}" == "${PREVIOUS_TAG}" ]]; then
+        USE_FAST_PATH=true
+      else
+        log "INFO" "Paused standby '${PAUSED_NAME}' holds tag '${PAUSED_TAG}', not the requested '${PREVIOUS_TAG}' - falling back to registry pull"
+      fi
     fi
 
-    # Start new GREEN container with the rollback image and Traefik labels
-    log "INFO" "Starting GREEN container with rollback image..."
-    docker run -d \
-      --name "${GREEN_NAME}" \
-      --network "${NETWORK}" \
-      --restart unless-stopped \
-      --health-cmd "curl -f http://localhost:${APP_PORT}/health || exit 1" \
-      --health-interval 10s \
-      --health-timeout 5s \
-      --health-retries 3 \
-      --health-start-period 30s \
-      --label "traefik.enable=false" \
-      --label "deploy.project=${PROJECT_NAME}" \
-      --label "deploy.role=green" \
-      --label "deploy.tag=${PREVIOUS_TAG}" \
-      --label "deploy.rollback=true" \
-      --label "deploy.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      "${ROLLBACK_IMAGE}" >> "${LOG_FILE}" 2>&1
+    if [[ "${USE_FAST_PATH}" == true ]]; then
+      log "INFO" "Found paused standby '${PAUSED_NAME}' (tag: ${PAUSED_TAG}) - restarting it instead of pulling from the registry"
+      docker start "${PAUSED_NAME}" >> "${LOG_FILE}" 2>&1
 
-    # Wait for GREEN health check
-    log "INFO" "Waiting for GREEN health check..."
-    HEALTH_TIMEOUT=120
-    HEALTH_START="$(date +%s)"
+      HEALTH_TIMEOUT=60
+      HEALTH_START="$(date +%s)"
+      while true; do
+        ELAPSED=$(( $(date +%s) - HEALTH_START ))
 
-    while true; do
-      ELAPSED=$(( $(date +%s) - HEALTH_START ))
+        if [[ ${ELAPSED} -ge ${HEALTH_TIMEOUT} ]]; then
+          log "ERROR" "Paused standby failed to become healthy - rollback aborted"
+          exit 1
+        fi
 
-      if [[ ${ELAPSED} -ge ${HEALTH_TIMEOUT} ]]; then
-        log "ERROR" "GREEN health check timed out"
+        HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${PAUSED_NAME}" 2>/dev/null || echo 'unknown')"
+        if [[ "${HEALTH_STATUS}" == "healthy" ]]; then
+          break
+        elif [[ "${HEALTH_STATUS}" == "unhealthy" ]]; then
+          log "ERROR" "Paused standby is unhealthy - rollback aborted"
+          exit 1
+        fi
+        sleep 5
+      done
+
+      log "INFO" "Standby is healthy (already carries the Traefik labels) - switching over..."
+      docker stop "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
+      docker rm -f "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
+      docker rename "${PAUSED_NAME}" "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1
+
+      log "INFO" "Traefik routing switched to the paused standby"
+    else
+      # -----------------------------------------------------------------
+      # Slow path: no usable standby, pull the rollback image and rebuild
+      # -----------------------------------------------------------------
+
+      # Remove any leftover GREEN container
+      if docker ps -aq -f "name=${GREEN_NAME}" | grep -q .; then
         docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
-        log "ERROR" "BLUE container retained - rollback aborted"
+      fi
+
+      # Start new GREEN container with the rollback image and Traefik labels
+      log "INFO" "Starting GREEN container with rollback image..."
+      docker run -d \
+        --name "${GREEN_NAME}" \
+        --network "${NETWORK}" \
+        --restart unless-stopped \
+        --health-cmd "curl -f http://localhost:${APP_PORT}/health || exit 1" \
+        --health-interval 10s \
+        --health-timeout 5s \
+        --health-retries 3 \
+        --health-start-period 30s \
+        --label "traefik.enable=false" \
+        --label "deploy.project=${PROJECT_NAME}" \
+        --label "deploy.role=green" \
+        --label "deploy.tag=${PREVIOUS_TAG}" \
+        --label "deploy.rollback=true" \
+        --label "deploy.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "${ROLLBACK_IMAGE}" >> "${LOG_FILE}" 2>&1
+
+      # Wait for GREEN health check
+      log "INFO" "Waiting for GREEN health check..."
+      HEALTH_TIMEOUT=120
+      HEALTH_START="$(date +%s)"
+
+      while true; do
+        ELAPSED=$(( $(date +%s) - HEALTH_START ))
+
+        if [[ ${ELAPSED} -ge ${HEALTH_TIMEOUT} ]]; then
+          log "ERROR" "GREEN health check timed out"
+          docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
+          log "ERROR" "BLUE container retained - rollback aborted"
+          exit 1
+        fi
+
+        HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
+        if [[ "${HEALTH_STATUS}" == "healthy" ]]; then
+          break
+        elif [[ "${HEALTH_STATUS}" == "unhealthy" ]]; then
+          log "ERROR" "GREEN container is unhealthy"
+          docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
+          exit 1
+        fi
+        sleep 5
+      done
+
+      log "INFO" "GREEN is healthy. Switching Traefik routing..."
+
+      # Stop BLUE (releases Traefik route)
+      docker stop "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
+
+      # Recreate GREEN with Traefik routing enabled
+      docker stop "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1
+      docker rm "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1
+
+      docker run -d \
+        --name "${GREEN_NAME}" \
+        --network "${NETWORK}" \
+        --restart unless-stopped \
+        --health-cmd "curl -f http://localhost:${APP_PORT}/health || exit 1" \
+        --health-interval 10s \
+        --health-timeout 5s \
+        --health-retries 3 \
+        --health-start-period 30s \
+        --label "traefik.enable=true" \
+        --label "traefik.http.routers.${ROUTER_NAME}.rule=Host(\`${DOMAIN}\`)" \
+        --label "traefik.http.routers.${ROUTER_NAME}.entrypoints=websecure" \
+        --label "traefik.http.routers.${ROUTER_NAME}.tls.certresolver=letsencrypt" \
+        --label "traefik.http.services.${ROUTER_NAME}.loadbalancer.server.port=${APP_PORT}" \
+        --label "deploy.project=${PROJECT_NAME}" \
+        --label "deploy.role=green" \
+        --label "deploy.tag=${PREVIOUS_TAG}" \
+        --label "deploy.rollback=true" \
+        --label "deploy.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "${ROLLBACK_IMAGE}" >> "${LOG_FILE}" 2>&1
+
+      # Wait for healthy again
+      sleep 10
+      HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
+      RETRIES=0
+
+      while [[ "${HEALTH_STATUS}" != "healthy" && ${RETRIES} -lt 24 ]]; do
+        sleep 5
+        (( RETRIES++ ))
+        HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
+      done
+
+      if [[ "${HEALTH_STATUS}" != "healthy" ]]; then
+        log "ERROR" "GREEN failed to become healthy after routing switch"
+        docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
+        docker start "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
+        log "ERROR" "Restored BLUE container"
         exit 1
       fi
 
-      HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
-      if [[ "${HEALTH_STATUS}" == "healthy" ]]; then
-        break
-      elif [[ "${HEALTH_STATUS}" == "unhealthy" ]]; then
-        log "ERROR" "GREEN container is unhealthy"
-        docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
-        exit 1
-      fi
-      sleep 5
-    done
+      # Remove old BLUE and rename GREEN to BLUE
+      docker rm -f "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
+      docker rename "${GREEN_NAME}" "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1
 
-    log "INFO" "GREEN is healthy. Switching Traefik routing..."
-
-    # Stop BLUE (releases Traefik route)
-    docker stop "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
-
-    # Recreate GREEN with Traefik routing enabled
-    docker stop "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1
-    docker rm "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1
-
-    docker run -d \
-      --name "${GREEN_NAME}" \
-      --network "${NETWORK}" \
-      --restart unless-stopped \
-      --health-cmd "curl -f http://localhost:${APP_PORT}/health || exit 1" \
-      --health-interval 10s \
-      --health-timeout 5s \
-      --health-retries 3 \
-      --health-start-period 30s \
-      --label "traefik.enable=true" \
-      --label "traefik.http.routers.${PROJECT_NAME}.rule=Host(\`${DOMAIN}\`)" \
-      --label "traefik.http.routers.${PROJECT_NAME}.entrypoints=websecure" \
-      --label "traefik.http.routers.${PROJECT_NAME}.tls.certresolver=letsencrypt" \
-      --label "traefik.http.services.${PROJECT_NAME}.loadbalancer.server.port=${APP_PORT}" \
-      --label "deploy.project=${PROJECT_NAME}" \
-      --label "deploy.role=green" \
-      --label "deploy.tag=${PREVIOUS_TAG}" \
-      --label "deploy.rollback=true" \
-      --label "deploy.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      "${ROLLBACK_IMAGE}" >> "${LOG_FILE}" 2>&1
-
-    # Wait for healthy again
-    sleep 10
-    HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
-    RETRIES=0
-
-    while [[ "${HEALTH_STATUS}" != "healthy" && ${RETRIES} -lt 24 ]]; do
-      sleep 5
-      (( RETRIES++ ))
-      HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
-    done
-
-    if [[ "${HEALTH_STATUS}" != "healthy" ]]; then
-      log "ERROR" "GREEN failed to become healthy after routing switch"
-      docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
-      docker start "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
-      log "ERROR" "Restored BLUE container"
-      exit 1
+      log "INFO" "Traefik routing switched to rollback version"
     fi
-
-    # Remove old BLUE and rename GREEN to BLUE
-    docker rm -f "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
-    docker rename "${GREEN_NAME}" "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1
-
-    log "INFO" "Traefik routing switched to rollback version"
     ;;
 esac
 
