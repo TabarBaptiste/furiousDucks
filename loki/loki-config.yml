@@ -33,8 +33,13 @@ storage_config:
 limits_config:
   reject_old_samples: true
   reject_old_samples_max_age: 168h
-  max_query_length: 721h
+  # 90-day log retention (CST: audit logs kept at least 90 days) and matching
+  # query window so historical logs remain searchable.
+  retention_period: 2160h
+  max_query_length: 2161h
 
+# Retention is enforced by the compactor (the legacy table_manager is deprecated
+# in Loki 3.x and has been removed).
 compactor:
   working_directory: /loki/compactor
   compaction_interval: 10m
@@ -42,7 +47,3 @@ compactor:
   delete_request_store: filesystem
   retention_delete_delay: 2h
   retention_delete_worker_count: 150
-
-table_manager:
-  retention_deletes_enabled: true
-  retention_period: 720h
