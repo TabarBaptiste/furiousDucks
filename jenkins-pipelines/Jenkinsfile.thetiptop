@@ -28,9 +28,11 @@ ciPipeline(
     runK6         : true,
 
     // Domains (one per environment)
+    // DEV/PREPROD -> wk-* (workflow platform domain)
+    // PROD -> dsp5-* (site internet domain, required for the delivered client site)
     devDomain     : "${projectName}-dev.wk-archi-o24a-4-5-g1.fr",
     preprodDomain : "${projectName}-preprod.wk-archi-o24a-4-5-g1.fr",
-    prodDomain    : "${projectName}.wk-archi-o24a-4-5-g1.fr",
+    prodDomain    : "${projectName}.dsp5-archi-o24a-4-5-g1.fr",
 
     // Application port
     appPort       : 3000,

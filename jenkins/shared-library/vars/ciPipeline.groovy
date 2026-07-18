@@ -15,7 +15,7 @@
 //       runK6       : true,
 //       devDomain   : 'my-app-dev.wk-archi-o24a-4-5-g1.fr',
 //       preprodDomain: 'my-app-preprod.wk-archi-o24a-4-5-g1.fr',
-//       prodDomain  : 'my-app.wk-archi-o24a-4-5-g1.fr',
+//       prodDomain  : 'my-app.dsp5-archi-o24a-4-5-g1.fr',
 //       appPort     : 3000,
 //       k6Vus       : 50,
 //       k6Duration  : '3m'
@@ -43,9 +43,12 @@ void call(Map config = [:]) {
     boolean runK6          = config.runK6          ?: false
 
     // Domains
+    // DEV/PREPROD are internal workflow environments -> wk-* (platform domain).
+    // PROD is the delivered client site -> dsp5-* (site internet domain), per
+    // the school's domain naming requirements (informations_mise_en_ligne.md).
     String devDomain      = config.devDomain      ?: "${projectName}-dev.wk-archi-o24a-4-5-g1.fr"
     String preprodDomain  = config.preprodDomain  ?: "${projectName}-preprod.wk-archi-o24a-4-5-g1.fr"
-    String prodDomain     = config.prodDomain     ?: "${projectName}.wk-archi-o24a-4-5-g1.fr"
+    String prodDomain     = config.prodDomain     ?: "${projectName}.dsp5-archi-o24a-4-5-g1.fr"
 
     // Networking
     int appPort        = config.appPort        ?: 3000
