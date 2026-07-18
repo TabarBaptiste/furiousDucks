@@ -11,7 +11,7 @@
 # -----------------------------------------------------------------------------
 jenkins:
   systemMessage: "Furious Ducks CI/CD - Jenkins"
-  numExecutors: 0
+  numExecutors: 2
   scmCheckoutRetryCount: 3
   quietPeriod: 5
 
@@ -29,7 +29,8 @@ jenkins:
       users:
         - id: "admin"
           name: "Admin CI"
-          password: "${JENKINS_ADMIN_PASSWORD:-admin}"
+          # No insecure default: startup fails closed if the secret is missing.
+          password: "${JENKINS_ADMIN_PASSWORD}"
 
   # ---------------------------------------------------------------------------
   # Authorization Strategy - Role-based access control
