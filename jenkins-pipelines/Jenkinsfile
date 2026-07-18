@@ -35,5 +35,8 @@ ciPipeline(
     prodDomain    : "${projectName}.dsp5-archi-o24a-4-5-g1.fr",
 
     // Application port exposed by the Docker container
-    appPort       : 3000
+    appPort       : 3000,
+
+    // Path to the Dockerfile relative to the repo root (default: 'Dockerfile')
+    dockerfile    : 'Dockerfile'
 )

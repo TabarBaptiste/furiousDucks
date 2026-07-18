@@ -37,6 +37,9 @@ ciPipeline(
     // Application port
     appPort       : 3000,
 
+    // Path to the Dockerfile (monorepo layout: app lives under webapp/)
+    dockerfile    : 'webapp/Dockerfile',
+
     // K6 performance test configuration
     k6Vus         : 100,
     k6Duration    : '5m'

@@ -53,6 +53,8 @@ void call(Map config = [:]) {
     // Networking
     int appPort        = config.appPort        ?: 3000
 
+    String dockerfilePath = config.dockerfile ?: 'Dockerfile'
+
     // K6 Performance settings
     int k6Vus          = config.k6Vus          ?: 50
     String k6Duration  = config.k6Duration     ?: '3m'
@@ -191,10 +193,26 @@ void call(Map config = [:]) {
                             --build-arg VCS_REF=${env.GIT_COMMIT_SHORT} \
                             --build-arg VERSION=${env.IMAGE_TAG} \
                             -t ${env.DOCKER_IMAGE}:${env.IMAGE_TAG} \
-                            -t ${env.DOCKER_IMAGE}:latest \
-                            -f webapp/Dockerfile \
+                            -f ${dockerfilePath} \
                             .
                     """
+                    script {
+                        // Only the main branch owns the ':latest' floating tag, so
+                        // feature/develop builds cannot overwrite it non-deterministically.
+                        if (env.BRANCH_NAME == 'main') {
+                            sh "docker tag ${env.DOCKER_IMAGE}:${env.IMAGE_TAG} ${env.DOCKER_IMAGE}:latest"
+                        }
+                    }
+                }
+            }
+
+            // =================================================================
+            // STAGE: Trivy Security Scan
+            // Runs BEFORE the push so a vulnerable image never reaches Harbor.
+            // =================================================================
+            stage('Trivy Scan') {
+                steps {
+                    trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG)
                 }
             }
 
@@ -203,16 +221,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Docker Push') {
                 steps {
-                    pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG)
-                }
-            }
-
-            // =================================================================
-            // STAGE: Trivy Security Scan
-            // =================================================================
-            stage('Trivy Scan') {
-                steps {
-                    trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG)
+                    pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG, env.BRANCH_NAME == 'main')
                 }
             }
 
@@ -261,14 +270,36 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: E2E Tests
+            // STAGE: Deploy PREPROD
+            // Deployed before E2E/K6 so those suites validate the freshly
+            // promoted PREPROD build (iso-prod), per the CST deployment process.
+            // =================================================================
+            stage('Deploy PREPROD') {
+                when {
+                    expression { return env.BRANCH_NAME == 'main' && deployPreprod }
+                }
+                steps {
+                    deployContainer(
+                        projectName   : projectName,
+                        environment   : 'preprod',
+                        imageTag      : env.IMAGE_TAG,
+                        domain        : preprodDomain,
+                        port          : appPort,
+                        registry      : registry,
+                        traefikNetwork: traefikNetwork
+                    )
+                }
+            }
+
+            // =================================================================
+            // STAGE: E2E Tests (against PREPROD)
             // =================================================================
             stage('E2E Tests') {
                 when {
                     expression { return env.BRANCH_NAME == 'main' && runE2E }
                 }
                 steps {
-                    runE2ETests(e2eFramework, env.HOST_WORKSPACE, traefikNetwork, devDomain)
+                    runE2ETests(e2eFramework, env.HOST_WORKSPACE, traefikNetwork, preprodDomain)
                 }
                 post {
                     always {
@@ -278,7 +309,7 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: K6 Performance Tests
+            // STAGE: K6 Performance Tests (against PREPROD)
             // =================================================================
             stage('K6 Performance') {
                 when {
@@ -298,26 +329,6 @@ void call(Map config = [:]) {
                     always {
                         archiveArtifacts(artifacts: 'k6-results.json, k6-summary.json', allowEmptyArchive: true)
                     }
-                }
-            }
-
-            // =================================================================
-            // STAGE: Deploy PREPROD
-            // =================================================================
-            stage('Deploy PREPROD') {
-                when {
-                    expression { return env.BRANCH_NAME == 'main' && deployPreprod }
-                }
-                steps {
-                    deployContainer(
-                        projectName   : projectName,
-                        environment   : 'preprod',
-                        imageTag      : env.IMAGE_TAG,
-                        domain        : preprodDomain,
-                        port          : appPort,
-                        registry      : registry,
-                        traefikNetwork: traefikNetwork
-                    )
                 }
             }
 
@@ -495,12 +506,14 @@ void installDependencies(String stack, String hostWorkspace) {
                     node:22-bullseye \
                     npm ci --prefer-offline --no-audit
             """
+            // Generate the Prisma client only when a schema is present, so the
+            // node stack stays generic across projects (not just Prisma apps).
             sh """
                 docker run --rm \
                     -v "${hostWorkspace}:/work" \
                     -w /work \
                     node:22-bullseye \
-                    bash -c 'cd api && npx prisma generate'
+                    bash -c 'if [ -f api/prisma/schema.prisma ]; then cd api && npx prisma generate; fi'
             """
             break
         case 'php':
@@ -531,13 +544,14 @@ void runLint(String stack, String hostWorkspace) {
                     -w /work \
                     node:22-bullseye \
                     bash -lc '
+                        set -e
                         for dir in api webapp; do
                             if [ -f "\$dir/.eslintrc.json" ] || \
                                [ -f "\$dir/.eslintrc.js" ] || \
                                [ -f "\$dir/eslint.config.js" ]; then
                                 echo "=== Linting \$dir ==="
                                 cd "\$dir"
-                                npx eslint "{src,apps,libs,test}/**/*.ts" --format stylish || true
+                                npx eslint "{src,apps,libs,test}/**/*.ts" --format stylish
                                 cd ..
                             fi
                         done
@@ -545,17 +559,17 @@ void runLint(String stack, String hostWorkspace) {
             """
             break
         case 'php':
-            sh 'vendor/bin/phpstan analyse --memory-limit=512M --error-format=table || true'
+            sh 'vendor/bin/phpstan analyse --memory-limit=512M --error-format=table'
             break
         case 'python':
             sh '''
 . .venv/bin/activate
 pip install flake8
-flake8 . --count --show-source --statistics || true
+flake8 . --count --show-source --statistics
 '''
             break
         case 'ruby':
-            sh 'bundle exec rubocop --format simple || true'
+            sh 'bundle exec rubocop --format simple'
             break
         default:
             echo "No linter configured for stack '${stack}'"
@@ -571,11 +585,12 @@ void runUnitTests(String stack, String hostWorkspace) {
                     -w /work \
                     node:22-bullseye \
                     bash -lc '
+                        set -e
                         for dir in api webapp; do
                             if [ -f "\$dir/jest.config.js" ] || [ -f "\$dir/jest.config.ts" ]; then
                                 echo "=== Testing \$dir ==="
                                 cd "\$dir"
-                                npx jest --ci --coverage --reporters=default --reporters=jest-junit || true
+                                npx jest --ci --coverage --reporters=default --reporters=jest-junit
                                 cd ..
                             fi
                         done
@@ -662,14 +677,21 @@ void runBuildAssets(String hostWorkspace) {
     """
 }
 
-void pushDockerImage(String registry, String dockerImage, String imageTag) {
+void pushDockerImage(String registry, String dockerImage, String imageTag, boolean pushLatest = false) {
     sh """
         echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${registry} \
             -u "\${HARBOR_CREDENTIALS_USR}" --password-stdin
         docker push ${dockerImage}:${imageTag}
-        docker push ${dockerImage}:latest
         docker logout ${registry}
     """
+    if (pushLatest) {
+        sh """
+            echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${registry} \
+                -u "\${HARBOR_CREDENTIALS_USR}" --password-stdin
+            docker push ${dockerImage}:latest
+            docker logout ${registry}
+        """
+    }
 }
 
 void trivyScan(String dockerImage, String imageTag) {
