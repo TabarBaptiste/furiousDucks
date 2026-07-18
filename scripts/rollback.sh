@@ -230,9 +230,22 @@ case "${ENVIRONMENT}" in
   dev|preprod)
     log "INFO" "Performing simple rollback for ${ENVIRONMENT}..."
 
-    # Capture current container configuration
-    CURRENT_PORTS="$(docker inspect --format='{{range $p, $conf := .NetworkSettings.Ports}}{{$p}} {{end}}' "${CONTAINER_NAME}" 2>/dev/null || echo '')"
-    CURRENT_ENV="$(docker inspect --format='{{range .Config.Env}}--env {{.}} {{end}}' "${CONTAINER_NAME}" 2>/dev/null || echo '')"
+    # The DEV/PREPROD router name matches the container name (see deployContainer
+    # in ciPipeline.groovy). Recover the Traefik routing config from the running
+    # container so the rollback container stays reachable through Traefik.
+    ROUTER_NAME="${CONTAINER_NAME}"
+    DOMAIN="$(docker inspect --format='{{index .Config.Labels "traefik.http.routers.'"${ROUTER_NAME}"'.rule"}}' "${CONTAINER_NAME}" 2>/dev/null || echo '')"
+    DOMAIN="$(echo "${DOMAIN}" | grep -o '`[^`]*`' | tr -d '`' || echo '')"
+    APP_PORT="$(docker inspect --format='{{index .Config.Labels "traefik.http.services.'"${ROUTER_NAME}"'.loadbalancer.server.port"}}' "${CONTAINER_NAME}" 2>/dev/null || echo '')"
+
+    if [[ -z "${DOMAIN}" || -z "${APP_PORT}" ]]; then
+      log "ERROR" "Could not recover Traefik domain/port from container '${CONTAINER_NAME}' labels"
+      log "ERROR" "The rollback container would not be routed by Traefik. Aborting."
+      exit 1
+    fi
+    log "INFO" "Recovered routing - domain: ${DOMAIN}, port: ${APP_PORT}"
+
+    NODE_ENV_VALUE="$( [[ "${ENVIRONMENT}" == "prod" ]] && echo 'production' || echo "${ENVIRONMENT}" )"
 
     # Save current image tag for potential re-rollback
     CURRENT_TAG="$(docker inspect --format='{{index .Config.Labels "deploy.tag"}}' "${CONTAINER_NAME}" 2>/dev/null || echo 'unknown')"
@@ -251,12 +264,20 @@ case "${ENVIRONMENT}" in
       --name "${CONTAINER_NAME}" \
       --network "${NETWORK}" \
       --restart unless-stopped \
+      --label "traefik.enable=true" \
+      --label "traefik.http.routers.${ROUTER_NAME}.rule=Host(\`${DOMAIN}\`)" \
+      --label "traefik.http.routers.${ROUTER_NAME}.entrypoints=websecure" \
+      --label "traefik.http.routers.${ROUTER_NAME}.tls.certresolver=letsencrypt" \
+      --label "traefik.http.services.${ROUTER_NAME}.loadbalancer.server.port=${APP_PORT}" \
+      --label "traefik.http.routers.${ROUTER_NAME}.middlewares=secure-headers@file" \
       --label "deploy.project=${PROJECT_NAME}" \
       --label "deploy.tag=${PREVIOUS_TAG}" \
       --label "deploy.previous-tag=${CURRENT_TAG}" \
       --label "deploy.environment=${ENVIRONMENT}" \
       --label "deploy.rollback=true" \
       --label "deploy.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      -e NODE_ENV="${NODE_ENV_VALUE}" \
+      -e APP_ENV="${ENVIRONMENT}" \
       "${ROLLBACK_IMAGE}" >> "${LOG_FILE}" 2>&1
 
     if [[ $? -ne 0 ]]; then
@@ -429,6 +450,7 @@ case "${ENVIRONMENT}" in
         --label "traefik.http.routers.${ROUTER_NAME}.entrypoints=websecure" \
         --label "traefik.http.routers.${ROUTER_NAME}.tls.certresolver=letsencrypt" \
         --label "traefik.http.services.${ROUTER_NAME}.loadbalancer.server.port=${APP_PORT}" \
+        --label "traefik.http.routers.${ROUTER_NAME}.middlewares=secure-headers@file" \
         --label "deploy.project=${PROJECT_NAME}" \
         --label "deploy.role=green" \
         --label "deploy.tag=${PREVIOUS_TAG}" \
