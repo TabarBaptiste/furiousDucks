@@ -15,7 +15,12 @@
 # its own docker-compose.yml. To integrate Harbor with Traefik:
 #   1. Run the Harbor installer: ./install.sh --with-trivy
 #   2. Edit Harbor's docker-compose.yml to attach the harbor-nginx (proxy)
-#      service to the "ci_network" external network.
+#      service to BOTH the "ci_network" and "workflow-network" external
+#      networks - the same pattern used by every other Traefik-routed
+#      service in this file (traefik, gitlab, jenkins, sonarqube,
+#      mattermost). Traefik itself lives on ci_network, so set
+#      "traefik.docker.network=ci_network" explicitly to disambiguate
+#      (see the sonarqube service below for reference).
 #   3. Add Traefik labels to the harbor-nginx service:
 #        labels:
 #          - "traefik.enable=true"
@@ -25,11 +30,19 @@
 #          - "traefik.http.routers.harbor.tls.certresolver=letsencrypt"
 #          - "traefik.http.routers.harbor.middlewares=secure-headers@file"
 #          - "traefik.http.services.harbor.loadbalancer.server.port=8080"
-#   4. Add the ci_network as an external network in Harbor's compose:
+#   4. Add ci_network and workflow-network as external networks in
+#      Harbor's compose:
 #        networks:
 #          ci_network:
 #            external: true
+#          workflow-network:
+#            external: true
 #   5. Restart Harbor: docker-compose -f docker-compose.yml up -d
+#   6. To let Prometheus scrape Harbor's metrics (see prometheus.yml, job
+#      "harbor"), also attach the "core" service to ci_network (Prometheus
+#      is not reachable from workflow-network) and enable metrics in
+#      harbor.yml (metric.enabled: true, metric.port: 8001).
+#      See docs/04-harbor.md, section "Metriques Prometheus".
 #
 # Prerequisites:
 #   - Create a .env file alongside this docker-compose.yml with required
@@ -392,6 +405,40 @@ services:
       retries: 5
       start_period: 30s
 
+  #############################################################################
+  # SONARQUBE DATABASE EXPORTER - Prometheus PostgreSQL Exporter
+  # Internal service, not exposed via Traefik. Scraped by Prometheus
+  # (see infrastructure/prometheus/prometheus.yml, job "postgres-exporter").
+  #############################################################################
+  sonarqube-db-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: common-sonarqube-db-exporter-ci
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${SONARQUBE_DB_USER:-sonarqube}:${SONARQUBE_DB_PASSWORD}@sonarqube-db:5432/${SONARQUBE_DB_NAME:-sonarqube}?sslmode=disable
+    networks:
+      - ci_network
+    depends_on:
+      sonarqube-db:
+        condition: service_healthy
+
+  #############################################################################
+  # MATTERMOST DATABASE EXPORTER - Prometheus PostgreSQL Exporter
+  # Internal service, not exposed via Traefik. Scraped by Prometheus
+  # (see infrastructure/prometheus/prometheus.yml, job "postgres-exporter").
+  #############################################################################
+  mattermost-db-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: common-mattermost-db-exporter-ci
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${MATTERMOST_DB_USER:-mattermost}:${MATTERMOST_DB_PASSWORD}@mattermost-db:5432/${MATTERMOST_DB_NAME:-mattermost}?sslmode=disable
+    networks:
+      - ci_network
+    depends_on:
+      mattermost-db:
+        condition: service_healthy
+
 ###############################################################################
 # VOLUMES
 # Named volumes for persistent data across container restarts and upgrades.
@@ -450,7 +497,9 @@ networks:
   # Shared network for cross-stack communication.
   # Monitoring (Prometheus, Grafana, Loki), backup (Restic, MinIO),
   # and project environments (DEV, PREPROD, PROD) connect via this network.
-  # Harbor also joins this network after being deployed with its own installer.
+  # Harbor's proxy (nginx) also joins this network after being deployed with
+  # its own installer, in addition to ci_network - see the Harbor
+  # integration steps above (Traefik lives on both networks).
   # Declared as external: true so other docker-compose stacks can attach to it.
   # Create it manually before first run:
   #   docker network create workflow-network
