@@ -158,13 +158,16 @@ scrape_configs:
   # ---------------------------------------------------------------------------
   # 12. Harbor (Docker Registry)
   # ---------------------------------------------------------------------------
-  # Exposes push/pull counts, storage usage, and scan job metrics from the
-  # "core" component. Harbor is deployed separately (see docker-compose.yml
+  # Harbor's nginx (proxy) container exposes a unified metrics endpoint on
+  # port 9090, proxying internally to the exporter/core/jobservice/registry
+  # components (see /opt/harbor-install/common/config/nginx/nginx.conf on the
+  # Harbor host). The container is named "nginx" (Harbor's own convention,
+  # not "harbor-nginx"). Harbor is deployed separately (see docker-compose.yml
   # header and docs/04-harbor.md) and must have metrics enabled
-  # (metric.enabled: true, metric.port: 8001 in harbor.yml) with its "core"
+  # (metric.enabled: true, metric.port: 9090 in harbor.yml) with its "proxy"
   # service attached to ci_network. This target reports down until then.
   - job_name: harbor
     metrics_path: /metrics
     static_configs:
       - targets:
-          - harbor-core:8001
+          - nginx:9090

@@ -12,16 +12,25 @@
 #
 # Harbor (Docker registry) is NOT included here. It must be deployed
 # separately using its official installer (./install.sh) which generates
-# its own docker-compose.yml. To integrate Harbor with Traefik:
+# its own docker-compose.yml. To integrate Harbor with Traefik AND let
+# Prometheus scrape its metrics:
 #   1. Run the Harbor installer: ./install.sh --with-trivy
-#   2. Edit Harbor's docker-compose.yml to attach the harbor-nginx (proxy)
-#      service to BOTH the "ci_network" and "workflow-network" external
-#      networks - the same pattern used by every other Traefik-routed
-#      service in this file (traefik, gitlab, jenkins, sonarqube,
-#      mattermost). Traefik itself lives on ci_network, so set
-#      "traefik.docker.network=ci_network" explicitly to disambiguate
-#      (see the sonarqube service below for reference).
-#   3. Add Traefik labels to the harbor-nginx service:
+#   2. In harbor.yml, enable metrics:
+#        metric:
+#          enabled: true
+#          port: 9090
+#          path: /metrics
+#   3. Edit Harbor's docker-compose.yml: attach the "proxy" service
+#      (container_name: nginx - Harbor's own naming, NOT "harbor-nginx") to
+#      the "ci_network" external network, comment out its "ports:" section
+#      entirely (both 80:8080 and 9090:9090 - Traefik handles public access,
+#      and 9090 must NOT be published on the host), and add Traefik labels:
+#        networks:
+#          - harbor
+#          - ci_network
+#        # ports:
+#        #   - 80:8080
+#        #   - 9090:9090
 #        labels:
 #          - "traefik.enable=true"
 #          - "traefik.docker.network=ci_network"
@@ -30,19 +39,17 @@
 #          - "traefik.http.routers.harbor.tls.certresolver=letsencrypt"
 #          - "traefik.http.routers.harbor.middlewares=secure-headers@file"
 #          - "traefik.http.services.harbor.loadbalancer.server.port=8080"
-#   4. Add ci_network and workflow-network as external networks in
-#      Harbor's compose:
+#      Add ci_network as an external network in Harbor's compose:
 #        networks:
 #          ci_network:
 #            external: true
-#          workflow-network:
-#            external: true
-#   5. Restart Harbor: docker-compose -f docker-compose.yml up -d
-#   6. To let Prometheus scrape Harbor's metrics (see prometheus.yml, job
-#      "harbor"), also attach the "core" service to ci_network (Prometheus
-#      is not reachable from workflow-network) and enable metrics in
-#      harbor.yml (metric.enabled: true, metric.port: 8001).
-#      See docs/04-harbor.md, section "Metriques Prometheus".
+#   4. Restart Harbor: docker compose up -d
+#   5. IMPORTANT: re-running "./prepare" (e.g. after editing harbor.yml, or
+#      to add a component) regenerates docker-compose.yml from scratch and
+#      WIPES steps 2-3 above. Re-apply them and "docker compose up -d" again
+#      every time "./prepare" is run.
+#   See docs/04-harbor.md, section "Metriques Prometheus", for the full
+#   step-by-step and prometheus.yml's "harbor" job for the scrape target.
 #
 # Prerequisites:
 #   - Create a .env file alongside this docker-compose.yml with required
@@ -75,7 +82,7 @@ services:
   # Handles HTTPS termination via Let's Encrypt for all exposed services.
   #############################################################################
   traefik:
-    image: traefik:v2.11
+    image: traefik:v3.7.8
     container_name: common-traefik-ci
     restart: unless-stopped
     ports:
