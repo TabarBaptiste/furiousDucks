@@ -41,14 +41,7 @@ http:
         burst: 50
         period: 1s
 
-    # -------------------------------------------------------------------------
-    # auth-admin - Basic authentication for admin endpoints
-    # Users are injected at runtime via the TRAEFIK_ADMIN_USERS environment
-    # variable. Generate entries with: htpasswd -nB <username>
-    # Example docker-compose label:
-    #   traefik.http.middlewares.auth-admin.basicauth.users=${TRAEFIK_ADMIN_USERS}
-    # -------------------------------------------------------------------------
-    auth-admin:
-      basicAuth:
-        users:
-          - "${TRAEFIK_ADMIN_USERS}"
+    # NOTE: basic-auth for admin endpoints is provided by the 'traefik-auth'
+    # middleware defined via Docker labels on the Traefik container (it needs
+    # the ${TRAEFIK_DASHBOARD_AUTH} value, and the file provider does not perform
+    # environment-variable substitution). Reference it as traefik-auth@docker.

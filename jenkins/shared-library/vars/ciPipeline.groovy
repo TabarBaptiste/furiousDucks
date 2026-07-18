@@ -417,7 +417,7 @@ void deployContainer(Map args) {
             --label "traefik.http.routers.${containerName}.entrypoints=websecure" \
             --label "traefik.http.routers.${containerName}.tls.certresolver=letsencrypt" \
             --label "traefik.http.services.${containerName}.loadbalancer.server.port=${args.port}" \
-            --label "traefik.http.routers.${containerName}.middlewares=security-headers@file" \
+            --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file" \
             -e NODE_ENV=${nodeEnv} \
             -e APP_ENV=${args.environment} \
             ${fullImage}
