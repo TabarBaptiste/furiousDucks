@@ -14,7 +14,11 @@
 # Prerequisites:
 #   - The ci_network and workflow-network must already exist (external).
 #   - External volumes (gitlab-*, jenkins-*, prometheus-*, grafana-*,
-#     sonarqube-*) must be created by the main CI compose stack.
+#     sonarqube-*, mattermost-*) must be created by the main CI compose stack.
+#   - If Harbor is deployed on this host (see docs/04-harbor.md), its data
+#     directory (data_volume in harbor.yml, default /data/harbor) must exist
+#     at the path bind-mounted below. If Harbor is not deployed yet,
+#     backup-harbor.sh detects the missing path and skips without failing.
 #   - A .env file must define:
 #       MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, RESTIC_PASSWORD
 # =============================================================================
@@ -104,6 +108,10 @@ services:
       - sonarqube-db-data:/backup-sources/sonarqube-db-data:ro
       - mattermost-data:/backup-sources/mattermost-data:ro
       - mattermost-config:/backup-sources/mattermost-config:ro
+      # --- Harbor registry (bind mount, not a Docker volume - Harbor is
+      #     deployed separately via its own installer, see docs/04-harbor.md).
+      #     Host path must match data_volume in harbor.yml (default /data/harbor). ---
+      - /data/harbor:/backup-sources/harbor-registry:ro
       # --- Writable target for logical DB dumps (backed up by restic) ---
       - backup-dumps:/backup-sources/db-dumps
       # --- Backup scripts ---
@@ -125,6 +133,7 @@ services:
   # Lightweight Docker-native cron scheduler. Executes commands inside the
   # backup-manager container on the following schedule:
   #
+  #   Sunday  01:00       -> /scripts/backup-harbor.sh      (weekly registry backup)
   #   Daily   02:00       -> /scripts/backup-all.sh         (full backup)
   #   Sunday  03:00       -> /scripts/verify-integrity.sh   (snapshot check)
   #   1st of month 04:00  -> /scripts/retention.sh          (prune old snaps)
@@ -136,6 +145,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
+      # --- Weekly Harbor registry backup on Sunday at 01:00 (before the
+      #     daily backup and the integrity check, see CST 7.5) ---
+      - "ofelia.job-exec.backup-harbor-weekly.schedule=0 0 1 * * 0"
+      - "ofelia.job-exec.backup-harbor-weekly.container=common-backup-manager-ci"
+      - "ofelia.job-exec.backup-harbor-weekly.command=/scripts/backup-harbor.sh"
       # --- Daily backup at 02:00 ---
       - "ofelia.job-exec.backup-daily.schedule=0 0 2 * * *"
       - "ofelia.job-exec.backup-daily.container=common-backup-manager-ci"
