@@ -47,7 +47,9 @@ services:
       - "traefik.http.routers.prometheus.entrypoints=websecure"
       - "traefik.http.routers.prometheus.tls=true"
       - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.prometheus.middlewares=secure-headers@file"
+      # Prometheus has no native auth: protect the public route with basic auth
+      # (reuses the dashboard credentials) + rate limiting on this admin endpoint.
+      - "traefik.http.routers.prometheus.middlewares=secure-headers@file,rate-limit@file,traefik-auth@docker"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
       - "traefik.docker.network=ci_network"
 
@@ -133,8 +135,8 @@ services:
 
   # ---------------------------------------------------------------------------
   # cAdvisor - Container Metrics Exporter
-  # Internal only - scraped by Prometheus on port 8080
-  # Host port 8081 mapped for debugging if needed
+  # Internal only - scraped by Prometheus on port 8080 via the Docker network.
+  # No host port published (the CST discourages exposing it publicly).
   # ---------------------------------------------------------------------------
   cadvisor:
     image: ghcr.io/google/cadvisor:v0.60.3
@@ -147,8 +149,6 @@ services:
       - --docker_only=true
       - --housekeeping_interval=15s
       - --store_container_labels=false
-    ports:
-      - "8081:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro

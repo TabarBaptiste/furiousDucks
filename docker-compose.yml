@@ -70,44 +70,17 @@ services:
       - "80:80"
       # HTTPS - main entry point for all services
       - "443:443"
-      # Dashboard - exposed via Traefik labels (internal access only)
-      - "8080:8080"
+      # Dashboard is reached via the HTTPS router (traefik.<domain>), not a
+      # published host port. The metrics entrypoint (:8082) stays internal too.
     volumes:
       # Docker socket (read-only) - Traefik discovers services via labels
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Static configuration
+      # Static configuration (single source of truth - see traefik/traefik.yml)
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       # Dynamic configuration directory
       - ./traefik/dynamic:/etc/traefik/dynamic:ro
       # ACME certificates storage (Let's Encrypt)
       - ./traefik/acme/acme.json:/acme.json
-    command:
-      # ------- Entrypoints -------
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--entrypoints.websecure.address=:443"
-      # ------- API / Dashboard -------
-      - "--api.dashboard=true"
-      - "--api.insecure=false"
-      - "--ping=true"
-      # ------- Docker provider -------
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.network=ci_network"
-      # ------- File provider (dynamic config) -------
-      - "--providers.file.directory=/etc/traefik/dynamic"
-      - "--providers.file.watch=true"
-      # ------- Let's Encrypt ACME resolver -------
-      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
-      - "--certificatesresolvers.letsencrypt.acme.storage=/acme.json"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
-      # ------- Logging -------
-      - "--log.level=INFO"
-      - "--accesslog=true"
-      - "--accesslog.filepath=/var/log/traefik/access.log"
-      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
     labels:
       # Enable Traefik for this container
       - "traefik.enable=true"
@@ -118,19 +91,11 @@ services:
       - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.routers.traefik-dashboard.tls.domains[0].main=traefik.wk-archi-o24a-4-5-g1.fr"
       - "traefik.http.routers.traefik-dashboard.service=api@internal"
-      - "traefik.http.routers.traefik-dashboard.middlewares=secure-headers@file,traefik-auth@docker"
+      - "traefik.http.routers.traefik-dashboard.middlewares=secure-headers@file,rate-limit@file,traefik-auth@docker"
       # --- Dashboard basic auth middleware ---
+      # (The shared security headers live in traefik/dynamic/middlewares.yml as
+      #  the 'secure-headers' file-provider middleware, applied by every router.)
       - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
-      # --- Security headers middleware (shared across all services) ---
-      - "traefik.http.middlewares.security-headers.headers.browserxssfilter=true"
-      - "traefik.http.middlewares.security-headers.headers.contenttypenosniff=true"
-      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
-      - "traefik.http.middlewares.security-headers.headers.stsincludesubdomains=true"
-      - "traefik.http.middlewares.security-headers.headers.stspreload=true"
-      - "traefik.http.middlewares.security-headers.headers.stsseconds=31536000"
-      - "traefik.http.middlewares.security-headers.headers.customframeoptionsvalue=SAMEORIGIN"
-      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
-      - "traefik.http.middlewares.security-headers.headers.permissionsPolicy=camera=(), microphone=(), geolocation=()"
     networks:
       - ci_network
       - workflow-network
