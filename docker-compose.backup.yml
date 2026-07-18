@@ -84,6 +84,15 @@ services:
       RESTIC_PASSWORD: ${RESTIC_PASSWORD}
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      # DB credentials for consistent logical dumps (pg_dump over ci_network)
+      SONARQUBE_DB_HOST: common-sonarqube-db-ci
+      SONARQUBE_DB_USER: ${SONARQUBE_DB_USER:-sonarqube}
+      SONARQUBE_DB_NAME: ${SONARQUBE_DB_NAME:-sonarqube}
+      SONARQUBE_DB_PASSWORD: ${SONARQUBE_DB_PASSWORD}
+      MATTERMOST_DB_HOST: common-mattermost-db-ci
+      MATTERMOST_DB_USER: ${MATTERMOST_DB_USER:-mattermost}
+      MATTERMOST_DB_NAME: ${MATTERMOST_DB_NAME:-mattermost}
+      MATTERMOST_DB_PASSWORD: ${MATTERMOST_DB_PASSWORD}
     volumes:
       # --- CI/CD data volumes (read-only) ---
       - gitlab-config:/backup-sources/gitlab-config:ro
@@ -93,11 +102,17 @@ services:
       - grafana-data:/backup-sources/grafana-data:ro
       - sonarqube-data:/backup-sources/sonarqube-data:ro
       - sonarqube-db-data:/backup-sources/sonarqube-db-data:ro
+      - mattermost-data:/backup-sources/mattermost-data:ro
+      - mattermost-config:/backup-sources/mattermost-config:ro
+      # --- Writable target for logical DB dumps (backed up by restic) ---
+      - backup-dumps:/backup-sources/db-dumps
       # --- Backup scripts ---
       - ./backup/scripts:/scripts:ro
       # --- Prometheus textfile metrics (shared with node-exporter) ---
       - /opt/furious-ducks/infrastructure/node-exporter/textfiles:/textfiles
     networks:
+      # ci_network is required to reach the database containers for pg_dump
+      - ci_network
       - backup_network
     depends_on:
       minio:
@@ -163,6 +178,10 @@ volumes:
   minio-data:
     driver: local
 
+  # Writable staging area for logical DB dumps (managed by this stack)
+  backup-dumps:
+    driver: local
+
   # External volumes created and managed by the main CI/CD and monitoring stacks
   # The 'name' must match the actual Docker volume name set in the source compose
   gitlab-config:
@@ -185,4 +204,10 @@ volumes:
     external: true
   sonarqube-db-data:
     name: common-sonarqube-db-data-ci
+    external: true
+  mattermost-data:
+    name: common-mattermost-data-ci
+    external: true
+  mattermost-config:
+    name: common-mattermost-config-ci
     external: true

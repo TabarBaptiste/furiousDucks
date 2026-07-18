@@ -28,6 +28,10 @@ TEXTFILE_DIR="${TEXTFILE_DIR:-/textfiles}"
 # (see docker-compose.backup.yml)
 VOLUMES_BASE="${VOLUMES_BASE:-/backup-sources}"
 
+# Directory (under /backup-sources) where logical DB dumps are written before
+# being picked up by the volume backup loop below.
+DB_DUMP_DIR="${DB_DUMP_DIR:-${VOLUMES_BASE}/db-dumps}"
+
 # Volumes to back up: directory_name -> tag
 declare -A BACKUP_TARGETS=(
   ["gitlab-config"]="gitlab-config"
@@ -37,6 +41,9 @@ declare -A BACKUP_TARGETS=(
   ["grafana-data"]="grafana"
   ["sonarqube-data"]="sonarqube"
   ["sonarqube-db-data"]="sonarqube-db"
+  ["mattermost-data"]="mattermost"
+  ["mattermost-config"]="mattermost-config"
+  ["db-dumps"]="db-dumps"
 )
 
 # ---------------------------------------------------------------------------
@@ -109,6 +116,44 @@ log "INFO" "========== Backup started at $(date '+%Y-%m-%d %H:%M:%S') ==========
 
 FAILED=0
 SUCCEEDED=0
+
+# ---------------------------------------------------------------------------
+# Logical database dumps (consistent point-in-time backups)
+#
+# A cold copy of a running database's data directory can be inconsistent.
+# We take proper logical dumps via pg_dump over ci_network and write them
+# into DB_DUMP_DIR, which the volume loop below then ships to Restic.
+#
+# NOTE: GitLab bundles its own PostgreSQL that is not reachable over the
+# network; it is captured at volume level (gitlab-data). For a fully
+# consistent GitLab backup, run `gitlab-backup create` inside the GitLab
+# container on a schedule (out of scope for this container).
+# ---------------------------------------------------------------------------
+mkdir -p "${DB_DUMP_DIR}"
+
+dump_postgres() {
+  local name="$1" host="$2" user="$3" db="$4" pass="$5"
+  local out="${DB_DUMP_DIR}/${name}.sql.gz"
+
+  if [[ -z "${host}" || -z "${pass}" ]]; then
+    log "WARN" "Skipping ${name} dump: host or password not configured"
+    return 0
+  fi
+
+  log "INFO" "Dumping database '${db}' from ${host}..."
+  if PGPASSWORD="${pass}" pg_dump -h "${host}" -U "${user}" -d "${db}" 2>> "${LOG_FILE}" | gzip > "${out}"; then
+    log "INFO" "  -> ${name} dumped to ${out}"
+  else
+    log "ERROR" "  -> Failed to dump ${name} from ${host}"
+    rm -f "${out}"
+    (( FAILED++ ))
+  fi
+}
+
+dump_postgres "sonarqube" "${SONARQUBE_DB_HOST:-}" "${SONARQUBE_DB_USER:-sonarqube}" \
+  "${SONARQUBE_DB_NAME:-sonarqube}" "${SONARQUBE_DB_PASSWORD:-}"
+dump_postgres "mattermost" "${MATTERMOST_DB_HOST:-}" "${MATTERMOST_DB_USER:-mattermost}" \
+  "${MATTERMOST_DB_NAME:-mattermost}" "${MATTERMOST_DB_PASSWORD:-}"
 
 for volume in "${!BACKUP_TARGETS[@]}"; do
   tag="${BACKUP_TARGETS[${volume}]}"
