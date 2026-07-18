@@ -231,12 +231,9 @@ services:
       dockerfile: Dockerfile
     container_name: common-jenkins-ci
     restart: unless-stopped
-    env_file:
-      - .env 
-    ports:
-      # JNLP agent port (internal communication only)
-      - "50000:50000"
     environment:
+      # Admin password consumed by JCasC (jenkins/casc/jenkins.yml)
+      - JENKINS_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD}
       # Jenkins base URL for reverse proxy awareness
       - JENKINS_OPTS=--prefix=/ --httpPort=8080
       # JVM tuning for production workloads

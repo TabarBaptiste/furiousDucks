@@ -1,2 +1,8 @@
 .env
 traefik/acme/
+
+# Runtime secret files - only the .example templates are committed
+alertmanager/secrets/*
+!alertmanager/secrets/*.example
+prometheus/secrets/*
+!prometheus/secrets/*.example

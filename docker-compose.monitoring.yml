@@ -36,6 +36,7 @@ services:
       - prometheus-data:/prometheus
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/secrets:/etc/prometheus/secrets:ro
     networks:
       - ci_network
       - monitoring_network
@@ -173,6 +174,7 @@ services:
       - "--storage.path=/alertmanager"
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/secrets:/etc/alertmanager/secrets:ro
       - alertmanager-data:/alertmanager
     networks:
       - ci_network

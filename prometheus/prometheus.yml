@@ -111,7 +111,10 @@ scrape_configs:
   # Bearer token generated via: mc admin prometheus generate local
   - job_name: minio
     metrics_path: /minio/v2/metrics/cluster
-    bearer_token: ***REMOVED***
+    # Bearer token injected via a mounted secret file (never committed).
+    # Generate with: mc admin prometheus generate local
+    # then write it to ./prometheus/secrets/minio_token (see the .example).
+    bearer_token_file: /etc/prometheus/secrets/minio_token
     static_configs:
       - targets:
           - common-minio-ci:9000

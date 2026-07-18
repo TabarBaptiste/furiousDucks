@@ -15,7 +15,9 @@ global:
   smtp_smarthost: 'smtp.gmail.com:587'
   smtp_from: 'nomaworkecoworking@gmail.com'
   smtp_auth_username: 'nomaworkecoworking@gmail.com'
-  smtp_auth_password: '***REMOVED***'
+  # Secret injected at runtime via a mounted file (never committed).
+  # Populate ./alertmanager/secrets/smtp_password from smtp_password.example.
+  smtp_auth_password_file: '/etc/alertmanager/secrets/smtp_password'
   smtp_require_tls: true
 
 # =============================================================================
@@ -97,7 +99,9 @@ receivers:
           Subject: '[CRITICAL] {{ .GroupLabels.alertname }} - AlertManager'
     # Mattermost incoming webhooks are Slack-compatible, hence slack_configs.
     slack_configs:
-      - api_url: 'https://chat.wk-archi-o24a-4-5-g1.fr/hooks/***REMOVED***'
+      # Mattermost incoming webhook URL injected via a mounted secret file.
+      # Populate ./alertmanager/secrets/mattermost_webhook from the .example.
+      - api_url_file: '/etc/alertmanager/secrets/mattermost_webhook'
         channel: 'devops-alerts'
         send_resolved: true
         title: '{{ if eq .Status "firing" }}FIRING{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
