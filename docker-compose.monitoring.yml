@@ -58,7 +58,7 @@ services:
   # Accessible at: https://monitor.wk-archi-o24a-4-5-g1.fr
   # ---------------------------------------------------------------------------
   grafana:
-    image: grafana/grafana:11.2.0
+    image: grafana/grafana:13.1.0
     container_name: common-grafana-ci
     restart: unless-stopped
     depends_on:
