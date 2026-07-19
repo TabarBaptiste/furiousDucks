@@ -1,0 +1,46 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// --- Docker container logs (via Docker socket, replaces Promtail's
+// static file scraping + docker{} pipeline stage, which never actually
+// populated container_name since the "name" field it relied on doesn't
+// exist in that pipeline stage's output) ---
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container_name"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  labels        = {"job" = "docker"}
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.write.local.receiver]
+}
+
+// --- System logs ---
+local.file_match "syslog" {
+  path_targets = [{"__path__" = "/var/log/syslog", "job" = "syslog"}]
+}
+
+loki.source.file "syslog" {
+  targets    = local.file_match.syslog.targets
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://common-loki-ci:3100/loki/api/v1/push"
+  }
+}

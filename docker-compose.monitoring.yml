@@ -96,7 +96,7 @@ services:
   # Internal only - not exposed via Traefik
   # ---------------------------------------------------------------------------
   loki:
-    image: grafana/loki:3.1.0
+    image: grafana/loki:3.7.3
     container_name: common-loki-ci
     restart: unless-stopped
     command:
@@ -111,21 +111,24 @@ services:
       - "traefik.enable=false"
 
   # ---------------------------------------------------------------------------
-  # Promtail - Log Shipping Agent
+  # Alloy - Log Shipping Agent (replaces Promtail, EOL 2026-03-02)
   # Internal only - collects and forwards logs to Loki
   # ---------------------------------------------------------------------------
-  promtail:
-    image: grafana/promtail:3.1.0
-    container_name: common-promtail-ci
+  alloy:
+    image: grafana/alloy:v1.17.1
+    container_name: common-alloy-ci
     restart: unless-stopped
     depends_on:
       - loki
     command:
-      - "-config.file=/etc/promtail/promtail-config.yml"
+      - "run"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+      - "--storage.path=/var/lib/alloy/data"
+      - "/etc/alloy/config.alloy"
     volumes:
-      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
       - /var/log:/var/log:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - ci_network
@@ -235,6 +238,9 @@ volumes:
     driver: local
   loki-data:
     name: common-loki-data-ci
+    driver: local
+  alloy-data:
+    name: common-alloy-data-ci
     driver: local
   alertmanager-data:
     name: common-alertmanager-data-ci
