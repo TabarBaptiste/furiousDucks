@@ -219,6 +219,8 @@ services:
     environment:
       # Admin password consumed by JCasC (jenkins/casc/jenkins.yml)
       - JENKINS_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD}
+      # Service account password for the thetiptop GitLab webhook (JCasC)
+      - JENKINS_WEBHOOK_THETIPTOP_PASSWORD=${JENKINS_WEBHOOK_THETIPTOP_PASSWORD}
       # Jenkins base URL for reverse proxy awareness
       - JENKINS_OPTS=--prefix=/ --httpPort=8080
       # JVM tuning for production workloads

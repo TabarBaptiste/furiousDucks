@@ -31,6 +31,11 @@ jenkins:
           name: "Admin CI"
           # No insecure default: startup fails closed if the secret is missing.
           password: "${JENKINS_ADMIN_PASSWORD}"
+        - id: "svc-thetiptop-webhook"
+          name: "GitLab Webhook - Thé Tip Top"
+          # Service account used only for the thetiptop GitLab push webhook
+          # (credentials embedded in the webhook URL). See item role below.
+          password: "${JENKINS_WEBHOOK_THETIPTOP_PASSWORD}"
 
   # ---------------------------------------------------------------------------
   # Authorization Strategy - Role-based access control
@@ -111,6 +116,20 @@ jenkins:
               - "View/Read"
             entries:
               - group: "developers"
+
+        items:
+          # ----- GitLab webhook service account (thetiptop only) -----
+          # Scoped strictly to the thetiptop job (and its branch jobs) so the
+          # webhook credentials cannot read/build anything else on the platform.
+          - name: "webhook-thetiptop"
+            description: "GitLab webhook trigger for the thetiptop job only"
+            pattern: "thetiptop(/.*)?"
+            permissions:
+              - "Job/Read"
+              - "Job/Build"
+              - "Job/Discover"
+            entries:
+              - user: "svc-thetiptop-webhook"
 
   # ---------------------------------------------------------------------------
   # Cloud - Docker cloud for ephemeral build agents
