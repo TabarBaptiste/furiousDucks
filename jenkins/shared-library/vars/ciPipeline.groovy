@@ -77,7 +77,7 @@ void call(Map config = [:]) {
             disableConcurrentBuilds()
             buildDiscarder(logRotator(numToKeepStr: '20'))
             timeout(time: 60, unit: 'MINUTES')
-            wrap([$class: 'AnsiColorBuildWrapper', colorMapName: 'xterm'])
+            ansiColor('xterm')
         }
 
         environment {
