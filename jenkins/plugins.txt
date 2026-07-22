@@ -49,6 +49,7 @@ http_request
 
 # --- Notifications ---------------------------------------------------------
 email-ext
+mattermost
 
 # --- Reporting (Code Coverage) -------------------------------------------------
 htmlpublisher

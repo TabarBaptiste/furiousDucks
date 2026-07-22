@@ -228,6 +228,9 @@ services:
       # CasC configuration path
       - CASC_JENKINS_CONFIG=/var/jenkins_home/casc
       - JENKINS_HOME_HOST=/var/lib/docker/volumes/common-jenkins-data-ci/_data
+      # Mattermost webhook for build failure notifications (JCasC)
+      - MATTERMOST_WEBHOOK_URL=${MATTERMOST_WEBHOOK_URL}
+      - MATTERMOST_CHANNEL=${MATTERMOST_CHANNEL:-ci-cd}
     volumes:
       # Persistent Jenkins data (jobs, builds, plugins, credentials)
       - jenkins-data:/var/jenkins_home

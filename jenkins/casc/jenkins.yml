@@ -199,11 +199,11 @@ unclassified:
     adminAddress: "ci-admin@wk-archi-o24a-4-5-g1.fr"
 
   # Mattermost notification defaults
-  # mattermostNotifier:
-  #   endpoint: "${MATTERMOST_WEBHOOK_URL}"
-  #   channel: "ci-cd"
-  #   icon: ""
-  #   buildServerUrl: "https://ci.wk-archi-o24a-4-5-g1.fr/"
+  mattermostNotifier:
+    endpoint: "${MATTERMOST_WEBHOOK_URL}"
+    room: "${MATTERMOST_CHANNEL:-ci-cd}"
+    icon: ""
+    buildServerUrl: "https://ci.wk-archi-o24a-4-5-g1.fr/"
 
   # Email notification defaults
   email-ext:

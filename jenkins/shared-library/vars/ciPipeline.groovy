@@ -469,10 +469,15 @@ void notifyBuild(String status, String projectName) {
         "Duration: ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}\n" +
         "[View Build](${env.BUILD_URL})"
 
-    echo 'Mattermost notification skipped (plugin not installed)'
     echo summary
 
     if (status == 'FAILURE') {
+        try {
+            mattermostSend(color: '#FF0000', message: summary)
+        } catch (Exception e) {
+            echo "Mattermost notification failed: ${e.message}"
+        }
+
         try {
         emailext(
             subject: "[CI/CD] ${projectName} - Build #${env.BUILD_NUMBER} FAILED",
