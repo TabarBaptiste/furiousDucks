@@ -104,6 +104,7 @@ void call(Map config = [:]) {
                             script: 'git describe --tags --exact-match 2>/dev/null || true',
                             returnStdout: true
                         ).trim()
+                        if (gitTag == 'null') { gitTag = '' }
                         String safeBranch = env.BRANCH_NAME.replaceAll('[^a-zA-Z0-9._-]', '-')
                         env.IMAGE_TAG = gitTag ?: "${safeBranch}-${env.GIT_COMMIT_SHORT}"
                         echo "Image tag: ${env.IMAGE_TAG}"
