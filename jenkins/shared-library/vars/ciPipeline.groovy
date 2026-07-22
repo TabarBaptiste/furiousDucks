@@ -212,7 +212,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Trivy Scan') {
                 steps {
-                    trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG)
+                    trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG, env.HOST_WORKSPACE)
                 }
             }
 
@@ -699,14 +699,21 @@ void pushDockerImage(String registry, String dockerImage, String imageTag, boole
     }
 }
 
-void trivyScan(String dockerImage, String imageTag) {
+void trivyScan(String dockerImage, String imageTag, String hostWorkspace) {
+    // .trivyignore is optional and lives in the client repo, not in this shared
+    // library - each project documents/justifies its own accepted CVEs.
+    boolean hasIgnoreFile = fileExists('.trivyignore')
+    String ignoreFileArg = hasIgnoreFile ? '--ignorefile /work/.trivyignore' : ''
+
     int trivyExit = sh(
         script: """
             docker run --rm \
                 -v /var/run/docker.sock:/var/run/docker.sock \
+                -v "${hostWorkspace}:/work" \
                 aquasec/trivy:latest image \
                 --exit-code 1 \
                 --severity CRITICAL \
+                ${ignoreFileArg} \
                 --no-progress \
                 --format table \
                 ${dockerImage}:${imageTag}
@@ -717,11 +724,13 @@ void trivyScan(String dockerImage, String imageTag) {
         sh """
             docker run --rm \
                 -v /var/run/docker.sock:/var/run/docker.sock \
+                -v "${hostWorkspace}:/work" \
                 aquasec/trivy:latest image \
                 --severity HIGH,CRITICAL \
+                ${ignoreFileArg} \
                 --no-progress \
                 --format json \
-                -o trivy-report.json \
+                -o /work/trivy-report.json \
                 ${dockerImage}:${imageTag} || true
         """
         error('Trivy found CRITICAL vulnerabilities - see report for details')
