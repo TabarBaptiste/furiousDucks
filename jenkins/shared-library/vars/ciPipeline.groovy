@@ -84,8 +84,6 @@ void call(Map config = [:]) {
             HARBOR_CREDENTIALS = credentials('harbor-credentials')
             SONAR_TOKEN        = credentials('sonarqube-token')
             DOCKER_IMAGE       = "${imageName}"
-            GIT_COMMIT_SHORT   = ''
-            IMAGE_TAG          = ''
         }
 
         stages {
