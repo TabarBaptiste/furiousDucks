@@ -98,6 +98,10 @@ void call(Map config = [:]) {
                             script: 'git rev-parse --short HEAD',
                             returnStdout: true
                         ).trim()
+                        env.GIT_COMMIT_MSG = sh(
+                            script: 'git log -1 --pretty=%s',
+                            returnStdout: true
+                        ).trim()
                         String gitTag = sh(
                             script: 'git describe --tags --exact-match 2>/dev/null || true',
                             returnStdout: true
@@ -195,6 +199,8 @@ void call(Map config = [:]) {
                     echo "Building ${env.DOCKER_IMAGE}:${env.IMAGE_TAG}"
                     sh """
                         docker build \
+                            --provenance=false \
+                            --sbom=false \
                             --build-arg BUILD_DATE=\$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
                             --build-arg VCS_REF=${env.GIT_COMMIT_SHORT} \
                             --build-arg VERSION=${env.IMAGE_TAG} \
@@ -483,7 +489,7 @@ void notifyBuild(String status, String projectName) {
 
     String summary = "${emoji} **${projectName}** - Build #${env.BUILD_NUMBER} **${status}**\n" +
         "Branch: '${env.BRANCH_NAME ?: 'N/A'}'\n" +
-        "Commit: '${env.GIT_COMMIT_SHORT ?: 'N/A'}'\n" +
+        "Commit: '${env.GIT_COMMIT_MSG ?: 'N/A'}'\n" +
         "Duration: ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}\n" +
         "[View Build](${env.BUILD_URL})"
 
@@ -502,7 +508,7 @@ void notifyBuild(String status, String projectName) {
             body: """
                 <h2>${projectName} - Build Failed</h2>
                 <p><strong>Branch:</strong> ${env.BRANCH_NAME ?: 'N/A'}</p>
-                <p><strong>Commit:</strong> ${env.GIT_COMMIT_SHORT ?: 'N/A'}</p>
+                <p><strong>Commit:</strong> ${env.GIT_COMMIT_MSG ?: 'N/A'}</p>
                 <p><strong>Duration:</strong> ${currentBuild.durationString ?: 'N/A'}</p>
                 <p><a href="${env.BUILD_URL}">View Build</a></p>
                 <p><a href="${env.BUILD_URL}console">Console Output</a></p>
