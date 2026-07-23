@@ -186,6 +186,13 @@ void call(Map config = [:]) {
             // STAGE: Docker Build
             // =================================================================
             stage('Docker Build') {
+                when {
+                    anyOf {
+                        branch 'main'
+                        branch 'develop'
+                        expression { return env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/ }
+                    }
+                }
                 steps {
                     echo "Building ${env.DOCKER_IMAGE}:${env.IMAGE_TAG}"
                     sh """
@@ -198,9 +205,7 @@ void call(Map config = [:]) {
                             .
                     """
                     script {
-                        // Only the main branch owns the ':latest' floating tag, so
-                        // feature/develop builds cannot overwrite it non-deterministically.
-                        if (env.BRANCH_NAME == 'main') {
+                        if (env.BRANCH_NAME == 'develop') {
                             sh "docker tag ${env.DOCKER_IMAGE}:${env.IMAGE_TAG} ${env.DOCKER_IMAGE}:latest"
                         }
                     }
@@ -212,6 +217,13 @@ void call(Map config = [:]) {
             // Runs BEFORE the push so a vulnerable image never reaches Harbor.
             // =================================================================
             stage('Trivy Scan') {
+                when {
+                    anyOf {
+                        branch 'main'
+                        branch 'develop'
+                        expression { return env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/ }
+                    }
+                }
                 steps {
                     trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG, env.HOST_WORKSPACE)
                 }
@@ -221,8 +233,15 @@ void call(Map config = [:]) {
             // STAGE: Docker Push (to Harbor registry)
             // =================================================================
             stage('Docker Push') {
+                when {
+                    anyOf {
+                        branch 'main'
+                        branch 'develop'
+                        expression { return env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/ }
+                    }
+                }
                 steps {
-                    pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG, env.BRANCH_NAME == 'main')
+                    pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
                 }
             }
 
