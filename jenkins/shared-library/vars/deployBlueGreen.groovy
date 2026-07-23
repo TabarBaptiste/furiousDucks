@@ -168,7 +168,7 @@ def call(Map config) {
                 --health-timeout=3s \
                 --health-retries=5 \
                 --label "traefik.enable=true" \
-                --label "traefik.http.routers.${routerName}.rule=Host(\`${domain}\`)" \
+                --label "traefik.http.routers.${routerName}.rule=Host(\\`${domain}\\`)" \
                 --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
                 --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
                 --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
@@ -300,7 +300,7 @@ def call(Map config) {
                 --health-timeout=3s \
                 --health-retries=5 \
                 --label "traefik.enable=true" \
-                --label "traefik.http.routers.${routerName}.rule=Host(\`${domain}\`)" \
+                --label "traefik.http.routers.${routerName}.rule=Host(\\`${domain}\\`)" \
                 --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
                 --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
                 --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
@@ -375,7 +375,7 @@ def rollback(Map config) {
             --health-timeout=3s \
             --health-retries=5 \
             --label "traefik.enable=true" \
-            --label "traefik.http.routers.${routerName}.rule=Host(\`${domain}\`)" \
+            --label "traefik.http.routers.${routerName}.rule=Host(\\`${domain}\\`)" \
             --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
             --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
             --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
