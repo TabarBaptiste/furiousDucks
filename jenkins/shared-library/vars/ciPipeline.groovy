@@ -449,7 +449,10 @@ void deployContainer(Map args) {
     String nodeEnv = args.environment == 'prod' ? 'production' : args.environment
 
     sh """
+        echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${args.registry} \
+            -u "\${HARBOR_CREDENTIALS_USR}" --password-stdin
         docker pull ${fullImage}
+        docker logout ${args.registry}
         docker stop ${containerName} 2>/dev/null || true
         docker rm ${containerName} 2>/dev/null || true
 

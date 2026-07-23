@@ -361,7 +361,10 @@ def rollback(Map config) {
         docker rm   ${blueContainer}  2>/dev/null || true
 
         # Pull and run the previous known-good version
+        echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${registry} \
+            -u "\${HARBOR_CREDENTIALS_USR}" --password-stdin
         docker pull ${fullImage}
+        docker logout ${registry}
 
         docker run -d \
             --name ${blueContainer} \
