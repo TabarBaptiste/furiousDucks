@@ -792,8 +792,7 @@ void runGitleaks(String hostWorkspace) {
                 detect \
                 --source=/path \
                 --report-path=/path/gitleaks-report.json \
-                --report-format=json \
-                --no-git
+                --report-format=json
         """,
         returnStatus: true
     )
