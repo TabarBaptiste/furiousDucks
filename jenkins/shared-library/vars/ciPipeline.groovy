@@ -29,7 +29,8 @@ void call(Map config = [:]) {
     // -------------------------------------------------------------------------
     String projectName    = config.projectName    ?: env.JOB_NAME
     String registry       = config.registry       ?: 'registry.wk-archi-o24a-4-5-g1.fr'
-    String imageName      = "${registry}/${projectName}"
+    String harborProject  = config.harborProject  ?: 'furious-ducks'
+    String imageName      = "${registry}/${harborProject}/${projectName}"
     String sonarProject   = config.sonarProject   ?: projectName
     String stack          = config.stack           ?: 'node'
 
