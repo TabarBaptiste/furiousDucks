@@ -277,6 +277,7 @@ void call(Map config = [:]) {
                         domain        : devDomain,
                         port          : appPort,
                         registry      : registry,
+                        harborProject : harborProject,
                         traefikNetwork: traefikNetwork
                     )
                 }
@@ -311,6 +312,7 @@ void call(Map config = [:]) {
                         domain        : preprodDomain,
                         port          : appPort,
                         registry      : registry,
+                        harborProject : harborProject,
                         traefikNetwork: traefikNetwork
                     )
                 }
@@ -398,6 +400,7 @@ void call(Map config = [:]) {
                         domain        : prodDomain,
                         port          : appPort,
                         registry      : registry,
+                        harborProject : harborProject,
                         traefikNetwork: traefikNetwork,
                         monitorMinutes: 15
                     )
@@ -409,12 +412,14 @@ void call(Map config = [:]) {
         // Post-build actions
         // =====================================================================
         post {
-            always {
-                cleanupWorkspace(env.HOST_WORKSPACE)
-            }
-
+            // TEMPORAIRE (debug pipeline en cours) : cleanupWorkspace() déplacé de
+            // `always` vers `success` uniquement, pour que "Restart from Stage" ait
+            // un workspace intact à réutiliser après un échec. A REMETTRE dans
+            // `always {}` une fois le pipeline stabilisé, sinon les workspaces des
+            // builds échoués s'accumulent sur le disque Jenkins sans être nettoyés.
             success {
                 script {
+                    cleanupWorkspace(env.HOST_WORKSPACE)
                     notifyBuild('SUCCESS', projectName)
                 }
             }
@@ -439,7 +444,8 @@ void call(Map config = [:]) {
 // =============================================================================
 void deployContainer(Map args) {
     String containerName = "${args.projectName}-${args.environment}"
-    String fullImage = "${args.registry}/${args.projectName}:${args.imageTag}"
+    String harborProject = args.harborProject ?: 'furious-ducks'
+    String fullImage = "${args.registry}/${harborProject}/${args.projectName}:${args.imageTag}"
     String nodeEnv = args.environment == 'prod' ? 'production' : args.environment
 
     sh """

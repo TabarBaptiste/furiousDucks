@@ -45,13 +45,14 @@ def call(Map config) {
     def domain         = config.domain
     def port           = config.port
     def registry       = config.registry       ?: 'registry.wk-archi-o24a-4-5-g1.fr'
+    def harborProject  = config.harborProject  ?: 'furious-ducks'
     def traefikNetwork = config.traefikNetwork ?: 'workflow-network'
     def monitorMinutes = config.monitorMinutes ?: (environment == 'prod' ? 15 : 0)
     def healthPath     = config.healthPath     ?: '/health'
     def healthTimeout  = config.healthTimeout  ?: 60   // seconds
     def healthInterval = config.healthInterval ?: 2    // seconds
 
-    def fullImage      = "${registry}/${projectName}:${imageTag}"
+    def fullImage      = "${registry}/${harborProject}/${projectName}:${imageTag}"
     def blueContainer  = "${projectName}-${environment}-blue"
     def greenContainer = "${projectName}-${environment}-green"
     def previousTag    = ''
@@ -342,12 +343,13 @@ def rollback(Map config) {
     def domain         = config.domain
     def port           = config.port       ?: 3000
     def registry       = config.registry   ?: 'registry.wk-archi-o24a-4-5-g1.fr'
+    def harborProject  = config.harborProject ?: 'furious-ducks'
     def traefikNetwork = config.traefikNetwork ?: 'workflow-network'
 
     def blueContainer  = "${projectName}-${environment}-blue"
     def greenContainer = "${projectName}-${environment}-green"
     def routerName     = "${projectName}-${environment}"
-    def fullImage      = "${registry}/${projectName}:${previousTag}"
+    def fullImage      = "${registry}/${harborProject}/${projectName}:${previousTag}"
 
     echo "=== ROLLBACK: Reverting ${projectName} ${environment} to ${previousTag} ==="
 

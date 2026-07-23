@@ -28,6 +28,7 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 REGISTRY="${REGISTRY:-registry.wk-archi-o24a-4-5-g1.fr}"
+HARBOR_PROJECT="${HARBOR_PROJECT:-furious-ducks}"
 NETWORK="${NETWORK:-workflow-network}"
 LOG_DIR="${LOG_DIR:-/var/log/deploy}"
 LOG_FILE="${LOG_DIR}/rollback-$(date +%Y%m%d-%H%M%S).log"
@@ -152,7 +153,7 @@ if [[ -z "${PREVIOUS_TAG}" ]]; then
   log "INFO" "Auto-detected previous tag: ${PREVIOUS_TAG}"
 fi
 
-ROLLBACK_IMAGE="${REGISTRY}/${PROJECT_NAME}:${PREVIOUS_TAG}"
+ROLLBACK_IMAGE="${REGISTRY}/${HARBOR_PROJECT}/${PROJECT_NAME}:${PREVIOUS_TAG}"
 log "INFO" "Rollback image: ${ROLLBACK_IMAGE}"
 
 # ---------------------------------------------------------------------------
