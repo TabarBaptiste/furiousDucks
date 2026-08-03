@@ -18,7 +18,21 @@
 //       prodDomain  : 'my-app.dsp5-archi-o24a-4-5-g1.fr',
 //       appPort     : 3000,
 //       k6Vus       : 50,
-//       k6Duration  : '3m'
+//       k6Duration  : '3m',
+//
+//       // Optional: separate backend API, deployed alongside the frontend.
+//       // Only wired for DEV so far - PREPROD/PROD follow once validated.
+//       apiDockerfile : 'api/Dockerfile',
+//       apiPort       : 3001,
+//       apiHealthPath : '/api/health',
+//       devApiDomain  : 'my-app-api-dev.wk-archi-o24a-4-5-g1.fr',
+//       dbCredentialsId: 'my-app-db-credentials',   // Jenkins "username/password" cred
+//                                                    // -> also used to build DATABASE_URL
+//                                                    //    and REDIS_HOST/PORT automatically
+//       apiEnv        : [FRONTEND_URL: 'https://my-app-dev.wk-archi-o24a-4-5-g1.fr'],
+//       apiSecretEnv  : [                             // pulled from Jenkins credentials
+//           [envVar: 'JWT_SECRET', credentialId: 'my-app-jwt-secret']
+//       ]
 //   )
 // =============================================================================
 
@@ -66,6 +80,18 @@ void call(Map config = [:]) {
 
     // Docker network for Traefik
     String traefikNetwork = config.traefikNetwork ?: 'workflow-network'
+
+    // -------------------------------------------------------------------------
+    // Optional separate backend API (currently only wired for DEV)
+    // -------------------------------------------------------------------------
+    String apiDockerfile  = config.apiDockerfile
+    boolean hasApi        = apiDockerfile != null
+    int apiPort           = config.apiPort         ?: 3001
+    String apiHealthPath  = config.apiHealthPath   ?: '/api/health'
+    String devApiDomain   = config.devApiDomain    ?: (hasApi ? "${projectName}-api-dev.wk-archi-o24a-4-5-g1.fr" : null)
+    String dbCredentialsId = config.dbCredentialsId ?: "${projectName}-db-credentials"
+    Map<String, String> apiEnv = config.apiEnv ?: [:]
+    List apiSecretEnv     = config.apiSecretEnv ?: []
 
     // -------------------------------------------------------------------------
     // Pipeline Definition
@@ -197,22 +223,41 @@ void call(Map config = [:]) {
                     }
                 }
                 steps {
-                    echo "Building ${env.DOCKER_IMAGE}:${env.IMAGE_TAG}"
-                    sh """
-                        docker build \
-                            --provenance=false \
-                            --sbom=false \
-                            --build-arg BUILD_DATE=\$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
-                            --build-arg VCS_REF=${env.GIT_COMMIT_SHORT} \
-                            --build-arg VERSION=${env.IMAGE_TAG} \
-                            -t ${env.DOCKER_IMAGE}:${env.IMAGE_TAG} \
-                            -f ${dockerfilePath} \
-                            .
-                    """
                     script {
-                        if (env.BRANCH_NAME == 'develop') {
-                            sh "docker tag ${env.DOCKER_IMAGE}:${env.IMAGE_TAG} ${env.DOCKER_IMAGE}:latest"
+                        // NEXT_PUBLIC_API_URL is a Next.js *build-time* variable, baked
+                        // into the client bundle - it must be passed as a --build-arg
+                        // here, not as a runtime -e on `docker run` (deployContainer()).
+                        // Only wired for DEV so far; PREPROD/PROD follow once validated.
+                        Map<String, String> webappBuildArgs = [:]
+                        if (hasApi && env.BRANCH_NAME == 'develop') {
+                            webappBuildArgs['NEXT_PUBLIC_API_URL'] = "https://${devApiDomain}/api/v1"
                         }
+                        echo "Building ${env.DOCKER_IMAGE}:${env.IMAGE_TAG}"
+                        buildDockerImage(
+                            dockerImage   : env.DOCKER_IMAGE,
+                            imageTag      : env.IMAGE_TAG,
+                            dockerfilePath: dockerfilePath,
+                            buildArgs     : webappBuildArgs
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
+            // STAGE: Docker Build API (optional separate backend, DEV only)
+            // =================================================================
+            stage('Docker Build API') {
+                when {
+                    expression { return hasApi && env.BRANCH_NAME == 'develop' }
+                }
+                steps {
+                    script {
+                        echo "Building ${env.DOCKER_IMAGE}-api:${env.IMAGE_TAG}"
+                        buildDockerImage(
+                            dockerImage   : "${env.DOCKER_IMAGE}-api",
+                            imageTag      : env.IMAGE_TAG,
+                            dockerfilePath: apiDockerfile
+                        )
                     }
                 }
             }
@@ -235,6 +280,18 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Trivy Security Scan API (optional separate backend, DEV only)
+            // =================================================================
+            stage('Trivy Scan API') {
+                when {
+                    expression { return hasApi && env.BRANCH_NAME == 'develop' }
+                }
+                steps {
+                    trivyScan("${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.HOST_WORKSPACE)
+                }
+            }
+
+            // =================================================================
             // STAGE: Docker Push (to Harbor registry)
             // =================================================================
             stage('Docker Push') {
@@ -251,6 +308,18 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Docker Push API (optional separate backend, DEV only)
+            // =================================================================
+            stage('Docker Push API') {
+                when {
+                    expression { return hasApi && env.BRANCH_NAME == 'develop' }
+                }
+                steps {
+                    pushDockerImage(registry, "${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
+                }
+            }
+
+            // =================================================================
             // STAGE: Gitleaks (Secret Detection)
             // =================================================================
             stage('Gitleaks') {
@@ -259,6 +328,87 @@ void call(Map config = [:]) {
                 }
                 steps {
                     runGitleaks(env.HOST_WORKSPACE)
+                }
+            }
+
+            // =================================================================
+            // STAGE: Ensure DEV Database (optional separate backend, DEV only)
+            // Postgres + Redis are shared across DEV/PREPROD and provisioned
+            // once, idempotently - never recreated on every build, since that
+            // would wipe data. PROD gets its own isolated instance later.
+            // =================================================================
+            stage('Ensure DEV Database') {
+                when {
+                    expression { return env.BRANCH_NAME == 'develop' && deployDev && hasApi }
+                }
+                steps {
+                    withCredentials([usernamePassword(
+                        credentialsId   : dbCredentialsId,
+                        usernameVariable: 'DB_USER',
+                        passwordVariable: 'DB_PASSWORD'
+                    )]) {
+                        ensureSharedDatabase(
+                            postgresContainer: "${projectName}-db-shared",
+                            redisContainer   : "${projectName}-redis-shared",
+                            dbName           : "${projectName}_dev",
+                            traefikNetwork   : traefikNetwork
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
+            // STAGE: Run Prisma Migrations (optional separate backend, DEV only)
+            // Applies pending migrations to the freshly-provisioned DEV database
+            // before the API container starts, so it doesn't crash hitting
+            // tables that don't exist yet on a brand new database.
+            // =================================================================
+            stage('Run Prisma Migrations') {
+                when {
+                    expression { return env.BRANCH_NAME == 'develop' && deployDev && hasApi }
+                }
+                steps {
+                    withCredentials([usernamePassword(
+                        credentialsId   : dbCredentialsId,
+                        usernameVariable: 'DB_USER',
+                        passwordVariable: 'DB_PASSWORD'
+                    )]) {
+                        runPrismaMigrations(
+                            hostWorkspace    : env.HOST_WORKSPACE,
+                            traefikNetwork   : traefikNetwork,
+                            postgresContainer: "${projectName}-db-shared",
+                            dbName           : "${projectName}_dev"
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
+            // STAGE: Deploy DEV API (optional separate backend, DEV only)
+            // =================================================================
+            stage('Deploy DEV API') {
+                when {
+                    expression { return env.BRANCH_NAME == 'develop' && deployDev && hasApi }
+                }
+                steps {
+                    script {
+                        deployApiContainer(
+                            projectName      : projectName,
+                            devApiDomain     : devApiDomain,
+                            apiPort          : apiPort,
+                            apiHealthPath    : apiHealthPath,
+                            imageTag         : env.IMAGE_TAG,
+                            registry         : registry,
+                            harborProject    : harborProject,
+                            traefikNetwork   : traefikNetwork,
+                            apiEnv           : apiEnv,
+                            apiSecretEnv     : apiSecretEnv,
+                            dbCredentialsId  : dbCredentialsId,
+                            postgresContainer: "${projectName}-db-shared",
+                            redisContainer   : "${projectName}-redis-shared",
+                            dbName           : "${projectName}_dev"
+                        )
+                    }
                 }
             }
 
@@ -443,10 +593,14 @@ void call(Map config = [:]) {
 // Helper: Deploy a container with Traefik labels
 // =============================================================================
 void deployContainer(Map args) {
-    String containerName = "${args.projectName}-${args.environment}"
+    String containerName = args.containerName ?: "${args.projectName}-${args.environment}"
     String harborProject = args.harborProject ?: 'furious-ducks'
-    String fullImage = "${args.registry}/${harborProject}/${args.projectName}:${args.imageTag}"
+    String imageProjectName = args.imageProjectName ?: args.projectName
+    String fullImage = "${args.registry}/${harborProject}/${imageProjectName}:${args.imageTag}"
     String nodeEnv = args.environment == 'prod' ? 'production' : args.environment
+    String healthPath = args.healthPath ?: '/health'
+    Map<String, String> extraEnv = args.extraEnv ?: [:]
+    String extraEnvFlags = extraEnv.collect { k, v -> "-e ${k}=\"${v}\"" }.join(' ')
 
     sh """
         echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${args.registry} \
@@ -468,11 +622,12 @@ void deployContainer(Map args) {
             --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file" \
             -e NODE_ENV=${nodeEnv} \
             -e APP_ENV=${args.environment} \
+            ${extraEnvFlags} \
             ${fullImage}
 
         echo "Waiting for ${containerName} to become healthy..."
         for i in \$(seq 1 30); do
-            if docker exec ${containerName} curl -sf http://localhost:${args.port}/health > /dev/null 2>&1; then
+            if docker exec ${containerName} curl -sf http://localhost:${args.port}${healthPath} > /dev/null 2>&1; then
                 echo "${containerName} is healthy"
                 break
             fi
@@ -484,6 +639,171 @@ void deployContainer(Map args) {
             sleep 2
         done
     """
+}
+
+// =============================================================================
+// Helper: Deploy the optional backend API container (DEV only for now)
+// Kept separate from the pipeline stage body so the "apiSecretEnv may be
+// empty" branching (withCredentials rejects an empty binding list) doesn't
+// clutter the Jenkinsfile-visible stage steps.
+// =============================================================================
+void deployApiContainer(Map args) {
+    List apiSecretEnv = args.apiSecretEnv ?: []
+    Map<String, String> apiEnv = args.apiEnv ?: [:]
+    String dbCredentialsId = args.dbCredentialsId
+    String postgresContainer = args.postgresContainer
+    String redisContainer = args.redisContainer
+    String dbName = args.dbName
+
+    // Reuses the same DB credential as "Ensure DEV Database" to build
+    // DATABASE_URL here, so callers never have to touch the DB password
+    // themselves just to wire the API's connection string.
+    List credBindings = apiSecretEnv.collect { e -> string(credentialsId: e.credentialId, variable: e.envVar) }
+    if (dbCredentialsId) {
+        credBindings += usernamePassword(
+            credentialsId   : dbCredentialsId,
+            usernameVariable: 'DB_USER',
+            passwordVariable: 'DB_PASSWORD'
+        )
+    }
+
+    Closure doDeploy = {
+        Map<String, String> secretEnv = [:]
+        apiSecretEnv.each { e -> secretEnv[e.envVar] = env."${e.envVar}" }
+        if (dbCredentialsId) {
+            secretEnv['DATABASE_URL'] =
+                "postgresql://${env.DB_USER}:${env.DB_PASSWORD}@${postgresContainer}:5432/${dbName}?schema=public"
+        }
+        if (redisContainer) {
+            secretEnv['REDIS_HOST'] = redisContainer
+            secretEnv['REDIS_PORT'] = '6379'
+        }
+        deployContainer(
+            projectName     : args.projectName,
+            containerName   : "${args.projectName}-api-dev",
+            imageProjectName: "${args.projectName}-api",
+            environment     : 'dev',
+            imageTag        : args.imageTag,
+            domain          : args.devApiDomain,
+            port            : args.apiPort,
+            healthPath      : args.apiHealthPath,
+            registry        : args.registry,
+            harborProject   : args.harborProject,
+            traefikNetwork  : args.traefikNetwork,
+            extraEnv        : apiEnv + secretEnv
+        )
+    }
+
+    if (credBindings) {
+        withCredentials(credBindings) { doDeploy() }
+    } else {
+        doDeploy()
+    }
+}
+
+// =============================================================================
+// Helper: Provision a shared Postgres + Redis pair, idempotently.
+// Only creates the containers/database if they don't already exist - never
+// stops/recreates them, since (unlike stateless app containers) that would
+// destroy data on every build. Generic across projects, not thetiptop-specific.
+// Requires DB_USER / DB_PASSWORD in the environment (bind via withCredentials).
+// =============================================================================
+void ensureSharedDatabase(Map args) {
+    String pgContainer = args.postgresContainer
+    String redisContainer = args.redisContainer
+    String dbName = args.dbName
+    String network = args.traefikNetwork
+
+    sh """
+        if ! docker ps -a --format '{{.Names}}' | grep -qx "${pgContainer}"; then
+            echo "Creating shared Postgres container ${pgContainer}"
+            docker run -d \
+                --name ${pgContainer} \
+                --restart unless-stopped \
+                --network ${network} \
+                -e POSTGRES_USER="\${DB_USER}" \
+                -e POSTGRES_PASSWORD="\${DB_PASSWORD}" \
+                -v ${pgContainer}-data:/var/lib/postgresql/data \
+                postgres:16-alpine
+
+            echo "Waiting for ${pgContainer} to accept connections..."
+            for i in \$(seq 1 30); do
+                docker exec ${pgContainer} pg_isready -U "\${DB_USER}" > /dev/null 2>&1 && break
+                sleep 2
+            done
+        else
+            echo "${pgContainer} already exists, leaving it untouched"
+        fi
+
+        if ! docker exec ${pgContainer} psql -U "\${DB_USER}" -tAc \
+            "SELECT 1 FROM pg_database WHERE datname='${dbName}'" | grep -q 1; then
+            echo "Creating database ${dbName}"
+            docker exec ${pgContainer} psql -U "\${DB_USER}" -c "CREATE DATABASE ${dbName}"
+        else
+            echo "Database ${dbName} already exists"
+        fi
+
+        if ! docker ps -a --format '{{.Names}}' | grep -qx "${redisContainer}"; then
+            echo "Creating shared Redis container ${redisContainer}"
+            docker run -d \
+                --name ${redisContainer} \
+                --restart unless-stopped \
+                --network ${network} \
+                -v ${redisContainer}-data:/data \
+                redis:8-alpine redis-server --appendonly yes
+        else
+            echo "${redisContainer} already exists, leaving it untouched"
+        fi
+    """
+}
+
+// =============================================================================
+// Helper: Apply Prisma migrations to the DEV database before the API
+// container starts. Runs from the already-installed workspace (node_modules
+// were populated in "Install Dependencies"), so `npx prisma migrate deploy`
+// resolves the local Prisma CLI rather than needing a fresh install.
+// Requires DB_USER / DB_PASSWORD in the environment (bind via withCredentials).
+// =============================================================================
+void runPrismaMigrations(Map args) {
+    String hostWorkspace = args.hostWorkspace
+    String traefikNetwork = args.traefikNetwork
+    String postgresContainer = args.postgresContainer
+    String dbName = args.dbName
+
+    sh """
+        docker run --rm \
+            -v "${hostWorkspace}:/work" \
+            -w /work/api \
+            --network ${traefikNetwork} \
+            -e DATABASE_URL="postgresql://\${DB_USER}:\${DB_PASSWORD}@${postgresContainer}:5432/${dbName}?schema=public" \
+            node:22-bullseye \
+            npx prisma migrate deploy
+    """
+}
+
+// =============================================================================
+// Helper: `docker build` with the standard provenance/date/vcs args, plus any
+// project-specific --build-arg pairs (e.g. NEXT_PUBLIC_API_URL).
+// =============================================================================
+void buildDockerImage(Map args) {
+    Map<String, String> extraBuildArgs = args.buildArgs ?: [:]
+    String extraArgsFlags = extraBuildArgs.collect { k, v -> "--build-arg ${k}=${v}" }.join(' ')
+
+    sh """
+        docker build \
+            --provenance=false \
+            --sbom=false \
+            --build-arg BUILD_DATE=\$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+            --build-arg VCS_REF=${env.GIT_COMMIT_SHORT} \
+            --build-arg VERSION=${args.imageTag} \
+            ${extraArgsFlags} \
+            -t ${args.dockerImage}:${args.imageTag} \
+            -f ${args.dockerfilePath} \
+            .
+    """
+    if (env.BRANCH_NAME == 'develop') {
+        sh "docker tag ${args.dockerImage}:${args.imageTag} ${args.dockerImage}:latest"
+    }
 }
 
 // =============================================================================
