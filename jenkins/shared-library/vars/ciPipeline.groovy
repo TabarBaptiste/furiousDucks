@@ -590,6 +590,17 @@ void call(Map config = [:]) {
 }
 
 // =============================================================================
+// Helper: Percent-encode a credential for safe use inside a connection URL
+// (postgresql://user:password@host:port/db). Without this, a DB password
+// containing reserved URL characters (: @ / % # [ ]) silently produces a
+// malformed connection string - this is what caused Prisma's "P1013 invalid
+// port number" failure on thetiptop.
+// =============================================================================
+String urlEncode(String value) {
+    return java.net.URLEncoder.encode(value, 'UTF-8').replace('+', '%20')
+}
+
+// =============================================================================
 // Helper: Deploy a container with Traefik labels
 // =============================================================================
 void deployContainer(Map args) {
@@ -610,6 +621,7 @@ void deployContainer(Map args) {
         docker stop ${containerName} 2>/dev/null || true
         docker rm ${containerName} 2>/dev/null || true
 
+        set +x
         docker run -d \
             --name ${containerName} \
             --restart unless-stopped \
@@ -624,6 +636,7 @@ void deployContainer(Map args) {
             -e APP_ENV=${args.environment} \
             ${extraEnvFlags} \
             ${fullImage}
+        set -x
 
         echo "Waiting for ${containerName} to become healthy..."
         for i in \$(seq 1 30); do
@@ -672,7 +685,7 @@ void deployApiContainer(Map args) {
         apiSecretEnv.each { e -> secretEnv[e.envVar] = env."${e.envVar}" }
         if (dbCredentialsId) {
             secretEnv['DATABASE_URL'] =
-                "postgresql://${env.DB_USER}:${env.DB_PASSWORD}@${postgresContainer}:5432/${dbName}?schema=public"
+                "postgresql://${urlEncode(env.DB_USER)}:${urlEncode(env.DB_PASSWORD)}@${postgresContainer}:5432/${dbName}?schema=public"
         }
         if (redisContainer) {
             secretEnv['REDIS_HOST'] = redisContainer
@@ -769,15 +782,19 @@ void runPrismaMigrations(Map args) {
     String traefikNetwork = args.traefikNetwork
     String postgresContainer = args.postgresContainer
     String dbName = args.dbName
+    String databaseUrl =
+        "postgresql://${urlEncode(env.DB_USER)}:${urlEncode(env.DB_PASSWORD)}@${postgresContainer}:5432/${dbName}?schema=public"
 
     sh """
+        set +x
         docker run --rm \
             -v "${hostWorkspace}:/work" \
             -w /work/api \
             --network ${traefikNetwork} \
-            -e DATABASE_URL="postgresql://\${DB_USER}:\${DB_PASSWORD}@${postgresContainer}:5432/${dbName}?schema=public" \
+            -e DATABASE_URL="${databaseUrl}" \
             node:22-bullseye \
             npx prisma migrate deploy
+        set -x
     """
 }
 
