@@ -129,6 +129,10 @@ void call(Map config = [:]) {
                             script: 'git log -1 --pretty=%s',
                             returnStdout: true
                         ).trim()
+                        env.GIT_COMMIT_AUTHOR = sh(
+                            script: 'git log -1 --pretty=%an',
+                            returnStdout: true
+                        ).trim()
                         String gitTag = sh(
                             script: 'git describe --tags --exact-match 2>/dev/null || true',
                             returnStdout: true
@@ -602,6 +606,13 @@ String urlEncode(String value) {
 
 // =============================================================================
 // Helper: Deploy a container with Traefik labels
+//
+// The post-deploy health check probes the container from a throwaway curl
+// sidecar on the same Docker network, rather than `docker exec ... curl`
+// inside the container: client images are expected to be minimal (see the
+// cahier des specifications) and cannot be assumed to ship curl - a
+// node:*-alpine image does not, which silently failed thetiptop's API deploy
+// while the app itself was perfectly healthy.
 // =============================================================================
 void deployContainer(Map args) {
     String containerName = args.containerName ?: "${args.projectName}-${args.environment}"
@@ -640,7 +651,8 @@ void deployContainer(Map args) {
 
         echo "Waiting for ${containerName} to become healthy..."
         for i in \$(seq 1 30); do
-            if docker exec ${containerName} curl -sf http://localhost:${args.port}${healthPath} > /dev/null 2>&1; then
+            if docker run --rm --network ${args.traefikNetwork} curlimages/curl:latest \
+                -sf "http://${containerName}:${args.port}${healthPath}" > /dev/null 2>&1; then
                 echo "${containerName} is healthy"
                 break
             fi
@@ -834,9 +846,15 @@ void notifyBuild(String status, String projectName) {
     ]
     String emoji = emojiMap[status] ?: ':question:'
 
+    // env.STAGE_NAME reflects the stage that was executing when the pipeline
+    // hit this post block, so on failure it points at the stage that failed.
+    String failedStageLine = (status == 'FAILURE' && env.STAGE_NAME) ?
+        "Stage: '${env.STAGE_NAME}'\n" : ''
+
     String summary = "${emoji} **${projectName}** - Build #${env.BUILD_NUMBER} **${status}**\n" +
         "Branch: '${env.BRANCH_NAME ?: 'N/A'}'\n" +
-        "Commit: '${env.GIT_COMMIT_MSG ?: 'N/A'}'\n" +
+        "Commit: '${env.GIT_COMMIT_MSG ?: 'N/A'}' by ${env.GIT_COMMIT_AUTHOR ?: 'N/A'}\n" +
+        failedStageLine +
         "Duration: ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}\n" +
         "[View Build](${env.BUILD_URL})"
 
@@ -855,7 +873,8 @@ void notifyBuild(String status, String projectName) {
             body: """
                 <h2>${projectName} - Build Failed</h2>
                 <p><strong>Branch:</strong> ${env.BRANCH_NAME ?: 'N/A'}</p>
-                <p><strong>Commit:</strong> ${env.GIT_COMMIT_MSG ?: 'N/A'}</p>
+                <p><strong>Commit:</strong> ${env.GIT_COMMIT_MSG ?: 'N/A'} by ${env.GIT_COMMIT_AUTHOR ?: 'N/A'}</p>
+                <p><strong>Stage:</strong> ${env.STAGE_NAME ?: 'N/A'}</p>
                 <p><strong>Duration:</strong> ${currentBuild.durationString ?: 'N/A'}</p>
                 <p><a href="${env.BUILD_URL}">View Build</a></p>
                 <p><a href="${env.BUILD_URL}console">Console Output</a></p>

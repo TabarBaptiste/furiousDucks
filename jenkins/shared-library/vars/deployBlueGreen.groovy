@@ -92,11 +92,6 @@ def call(Map config) {
                 --name ${greenContainer} \
                 --restart unless-stopped \
                 --network ${traefikNetwork} \
-                --health-cmd="curl -sf http://localhost:${port}${healthPath} || exit 1" \
-                --health-interval=5s \
-                --health-timeout=3s \
-                --health-retries=10 \
-                --health-start-period=15s \
                 -e NODE_ENV=production \
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
@@ -116,19 +111,12 @@ def call(Map config) {
         sh """
             echo "Waiting for GREEN container health check (max ${healthTimeout}s)..."
             for i in \$(seq 1 ${maxAttempts}); do
-                STATUS=\$(docker inspect --format='{{.State.Health.Status}}' ${greenContainer} 2>/dev/null || echo "unknown")
-                echo "  Attempt \$i/${maxAttempts}: status=\$STATUS"
-
-                if [ "\$STATUS" = "healthy" ]; then
+                if docker run --rm --network ${traefikNetwork} curlimages/curl:latest \
+                    -sf "http://${greenContainer}:${port}${healthPath}" > /dev/null 2>&1; then
                     echo "GREEN container is healthy!"
                     exit 0
                 fi
-
-                if [ "\$STATUS" = "unhealthy" ]; then
-                    echo "ERROR: GREEN container is unhealthy"
-                    docker logs --tail 50 ${greenContainer}
-                    exit 1
-                fi
+                echo "  Attempt \$i/${maxAttempts}: not healthy yet"
 
                 sleep ${healthInterval}
             done
@@ -163,10 +151,6 @@ def call(Map config) {
                 --name ${greenContainer} \
                 --restart unless-stopped \
                 --network ${traefikNetwork} \
-                --health-cmd="curl -sf http://localhost:${port}${healthPath} || exit 1" \
-                --health-interval=10s \
-                --health-timeout=3s \
-                --health-retries=5 \
                 --label "traefik.enable=true" \
                 --label "traefik.http.routers.${routerName}.rule=Host(\\`${domain}\\`)" \
                 --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
@@ -207,16 +191,15 @@ def call(Map config) {
                     MAX_FAILURES=3
 
                     for i in \$(seq 1 ${checks}); do
-                        # Check container health
-                        STATUS=\$(docker inspect --format='{{.State.Health.Status}}' ${greenContainer} 2>/dev/null || echo "unknown")
-
-                        # Check HTTP response
-                        HTTP_CODE=\$(docker exec ${greenContainer} curl -sf -o /dev/null -w '%{http_code}' http://localhost:${port}${healthPath} 2>/dev/null || echo "000")
+                        # Check HTTP response from an external curl sidecar - the
+                        # target image is not guaranteed to ship curl itself
+                        HTTP_CODE=\$(docker run --rm --network ${traefikNetwork} curlimages/curl:latest \
+                            -s -o /dev/null -w '%{http_code}' "http://${greenContainer}:${port}${healthPath}" 2>/dev/null || echo "000")
 
                         ELAPSED=\$(( i * ${checkInterval} ))
-                        echo "  [\${ELAPSED}/${monitorSeconds}s] health=\${STATUS} http=\${HTTP_CODE}"
+                        echo "  [\${ELAPSED}/${monitorSeconds}s] http=\${HTTP_CODE}"
 
-                        if [ "\$STATUS" != "healthy" ] || [ "\$HTTP_CODE" != "200" ]; then
+                        if [ "\$HTTP_CODE" != "200" ]; then
                             FAILURES=\$((FAILURES + 1))
                             echo "  WARNING: Check failed (\${FAILURES}/\${MAX_FAILURES})"
 
@@ -295,10 +278,6 @@ def call(Map config) {
                 --name ${blueContainer} \
                 --restart unless-stopped \
                 --network ${traefikNetwork} \
-                --health-cmd="curl -sf http://localhost:${port}${healthPath} || exit 1" \
-                --health-interval=10s \
-                --health-timeout=3s \
-                --health-retries=5 \
                 --label "traefik.enable=true" \
                 --label "traefik.http.routers.${routerName}.rule=Host(\\`${domain}\\`)" \
                 --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
@@ -315,8 +294,8 @@ def call(Map config) {
 
             # Verify the new BLUE is healthy
             for i in \$(seq 1 15); do
-                STATUS=\$(docker inspect --format='{{.State.Health.Status}}' ${blueContainer} 2>/dev/null || echo "unknown")
-                if [ "\$STATUS" = "healthy" ]; then
+                if docker run --rm --network ${traefikNetwork} curlimages/curl:latest \
+                    -sf "http://${blueContainer}:${port}${healthPath}" > /dev/null 2>&1; then
                     echo "New BLUE container is healthy - deployment complete!"
                     exit 0
                 fi
@@ -370,10 +349,6 @@ def rollback(Map config) {
             --name ${blueContainer} \
             --restart unless-stopped \
             --network ${traefikNetwork} \
-            --health-cmd="curl -sf http://localhost:${port}/health || exit 1" \
-            --health-interval=10s \
-            --health-timeout=3s \
-            --health-retries=5 \
             --label "traefik.enable=true" \
             --label "traefik.http.routers.${routerName}.rule=Host(\\`${domain}\\`)" \
             --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
