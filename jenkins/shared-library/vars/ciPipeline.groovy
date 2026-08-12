@@ -260,8 +260,7 @@ void call(Map config = [:]) {
                         buildDockerImage(
                             dockerImage   : "${env.DOCKER_IMAGE}-api",
                             imageTag      : env.IMAGE_TAG,
-                            dockerfilePath: apiDockerfile,
-                            buildContext  : apiDockerfile.substring(0, apiDockerfile.lastIndexOf('/'))
+                            dockerfilePath: apiDockerfile
                         )
                     }
                 }
@@ -818,7 +817,6 @@ void runPrismaMigrations(Map args) {
 void buildDockerImage(Map args) {
     Map<String, String> extraBuildArgs = args.buildArgs ?: [:]
     String extraArgsFlags = extraBuildArgs.collect { k, v -> "--build-arg ${k}=${v}" }.join(' ')
-    String buildContext = args.buildContext ?: '.'
 
     sh """
         docker build \
@@ -830,7 +828,7 @@ void buildDockerImage(Map args) {
             ${extraArgsFlags} \
             -t ${args.dockerImage}:${args.imageTag} \
             -f ${args.dockerfilePath} \
-            ${buildContext}
+            .
     """
     if (env.BRANCH_NAME == 'develop') {
         sh "docker tag ${args.dockerImage}:${args.imageTag} ${args.dockerImage}:latest"
