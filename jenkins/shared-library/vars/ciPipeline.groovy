@@ -67,6 +67,12 @@ void call(Map config = [:]) {
     // Post-deploy stability watch on PREPROD, in minutes (CST: "5 min métriques").
     int preprodMonitorMinutes = config.preprodMonitorMinutes ?: 5
 
+    // Notification recipients per environment, e.g.
+    //   [preprod: 'po@client.tld,techlead@agency.tld', prod: '...']
+    // Environments absent from the map fall back to the default Jenkins
+    // recipient providers (commit authors + build requester).
+    Map<String, String> notifyRecipients = config.notifyRecipients ?: [:]
+
     // Domains
     // DEV/PREPROD are internal workflow environments -> wk-* (platform domain).
     // PROD is the delivered client site -> dsp5-* (site internet domain), per
@@ -710,19 +716,20 @@ void call(Map config = [:]) {
             success {
                 script {
                     cleanupWorkspace(env.HOST_WORKSPACE)
-                    notifyBuild('SUCCESS', projectName)
+                    notifyBuild('SUCCESS', projectName, env.DEPLOY_ENV,
+                        notifyRecipients[env.DEPLOY_ENV] ?: '')
                 }
             }
 
             failure {
                 script {
-                    notifyBuild('FAILURE', projectName)
+                    notifyBuild('FAILURE', projectName, env.DEPLOY_ENV)
                 }
             }
 
             unstable {
                 script {
-                    notifyBuild('UNSTABLE', projectName)
+                    notifyBuild('UNSTABLE', projectName, env.DEPLOY_ENV)
                 }
             }
         }
@@ -1211,7 +1218,7 @@ void buildDockerImage(Map args) {
 // =============================================================================
 // Helper: Send build notifications (Mattermost + Email)
 // =============================================================================
-void notifyBuild(String status, String projectName) {
+void notifyBuild(String status, String projectName, String deployEnv = '', String recipients = '') {
     Map<String, String> emojiMap = [
         'SUCCESS' : ':white_check_mark:',
         'FAILURE' : ':x:',
@@ -1232,6 +1239,35 @@ void notifyBuild(String status, String projectName) {
         "[View Build](${env.BUILD_URL})"
 
     echo summary
+
+    // Stakeholder notification: on a successful deployment to an environment
+    // that declares recipients (PREPROD -> PO, client, Tech Lead, support per
+    // the CST), tell them the environment is ready for functional acceptance.
+    // Failures keep going to the people who can act on them (below), not to the
+    // client.
+    if (status == 'SUCCESS' && recipients) {
+        try {
+            emailext(
+                subject: "[${deployEnv.toUpperCase()}] ${projectName} - version ${env.IMAGE_TAG ?: env.BUILD_NUMBER} déployée",
+                body: """
+                    <h2>${projectName} - déploiement ${deployEnv.toUpperCase()} réussi</h2>
+                    <p>Une nouvelle version vient d'être déployée et est disponible pour la recette.</p>
+                    <ul>
+                        <li><strong>Version :</strong> ${env.IMAGE_TAG ?: 'N/A'}</li>
+                        <li><strong>Branche :</strong> ${env.BRANCH_NAME ?: 'N/A'}</li>
+                        <li><strong>Dernier commit :</strong> ${env.GIT_COMMIT_MSG ?: 'N/A'}</li>
+                        <li><strong>Build :</strong> <a href="${env.BUILD_URL}">#${env.BUILD_NUMBER}</a></li>
+                    </ul>
+                    <p>Merci de procéder à la validation fonctionnelle et de remonter
+                    toute anomalie à la cheffe de projet.</p>
+                """,
+                mimeType: 'text/html',
+                to: recipients
+            )
+        } catch (Exception e) {
+            echo "Stakeholder notification failed: ${e.message}"
+        }
+    }
 
     if (status == 'FAILURE') {
         try {
