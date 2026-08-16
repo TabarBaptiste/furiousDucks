@@ -60,6 +60,9 @@ void call(Map config = [:]) {
     // Test flags
     boolean runE2E         = config.runE2E         ?: false
     boolean runK6          = config.runK6          ?: false
+    // OWASP ZAP baseline scan against the deployed PREPROD site (CST 3.2 lists
+    // Trivy + Gitleaks + OWASP as the PREPROD security barrier).
+    boolean runZap         = config.runZap         ?: false
 
     // Post-deploy stability watch on PREPROD, in minutes (CST: "5 min métriques").
     int preprodMonitorMinutes = config.preprodMonitorMinutes ?: 5
@@ -585,6 +588,30 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: OWASP ZAP Baseline (against PREPROD)
+            // Third leg of the PREPROD security barrier required by the CST
+            // (Trivy on images, Gitleaks on secrets, OWASP on the running site).
+            // Unlike Trivy/Gitleaks, this one probes the *deployed* application,
+            // so it runs after Deploy PREPROD rather than on the source tree.
+            // =================================================================
+            stage('OWASP ZAP') {
+                when {
+                    expression { return env.DEPLOY_ENV == 'preprod' && runZap }
+                }
+                steps {
+                    runZapBaseline(env.HOST_WORKSPACE, traefikNetwork, preprodDomain)
+                }
+                post {
+                    always {
+                        archiveArtifacts(
+                            artifacts: 'zap-report.html, zap-report.json',
+                            allowEmptyArchive: true
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
             // STAGE: Monitor PREPROD
             // The CST asks for 5 minutes of post-deploy metrics on PREPROD with
             // an automatic rollback if the health check fails. It runs after the
@@ -749,6 +776,36 @@ Map<String, String> apiEnvFor(Map<String, String> baseEnv, String frontDomain) {
         FRONTEND_URL: "https://${frontDomain}",
         CORS_ORIGINS: "https://${frontDomain}"
     ] + (baseEnv ?: [:])
+}
+
+// =============================================================================
+// Helper: OWASP ZAP baseline scan against a deployed environment.
+// Passive scan only (no attack traffic), which is what a baseline run is for:
+// it crawls the site and reports misconfigurations and missing security
+// headers. Findings mark the build UNSTABLE rather than failing it, matching
+// how Semgrep is already handled - the CST makes the scan mandatory, not its
+// findings blocking.
+// =============================================================================
+void runZapBaseline(String hostWorkspace, String traefikNetwork, String targetDomain) {
+    int zapExit = sh(
+        script: """
+            docker run --rm \
+                -v "${hostWorkspace}:/zap/wrk:rw" \
+                --network ${traefikNetwork} \
+                ghcr.io/zaproxy/zaproxy:stable \
+                zap-baseline.py \
+                -t https://${targetDomain} \
+                -r zap-report.html \
+                -J zap-report.json
+        """,
+        returnStatus: true
+    )
+    // 0 = clean, 2 = warnings only, 1/3 = failures or a broken run.
+    if (zapExit == 0) {
+        echo 'OWASP ZAP baseline passed - no findings'
+    } else {
+        unstable("OWASP ZAP baseline reported findings (exit ${zapExit}) - review zap-report.html")
+    }
 }
 
 // =============================================================================
