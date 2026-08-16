@@ -26,6 +26,25 @@ ciPipeline(
     // Test toggles
     runE2E        : true,
     runK6         : true,
+    runZap        : true,   // OWASP ZAP baseline against PREPROD
+
+    // Post-deploy stability watch on PREPROD, with automatic rollback
+    preprodMonitorMinutes: 5,
+
+    // Comité de pilotage (cf. cahier des charges). PREPROD notifies the people
+    // who run the functional acceptance; PROD adds both sponsors.
+    notifyRecipients: [
+        preprod: 'alexandre.petit@thetiptop.fr,' +
+                 'nathalie.dubois@thetiptop.fr,' +
+                 'harenaandriamananjaramandimby@furiousducks.fr,' +
+                 'baptistetabarlabonne@furiousducks.com',
+        prod   : 'eric.bourdon@thetiptop.fr,' +
+                 'nathalie.dubois@thetiptop.fr,' +
+                 'alexandre.petit@thetiptop.fr,' +
+                 'guido.brasletti@furiousducks.com,' +
+                 'harenaandriamananjaramandimby@furiousducks.fr,' +
+                 'baptistetabarlabonne@furiousducks.com'
+    ],
 
     // Domains (one per environment)
     // DEV/PREPROD -> wk-* (workflow platform domain)
