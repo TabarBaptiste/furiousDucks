@@ -105,6 +105,16 @@ void call(Map config = [:]) {
     Map<String, String> apiEnv = config.apiEnv ?: [:]
     List apiSecretEnv     = config.apiSecretEnv ?: []
 
+    // Per-environment credential overrides. The CST (2.9) requires a distinct
+    // credential set per environment; projects that start on a single shared set
+    // can split them later by filling these maps, without touching the library.
+    // Any environment left out falls back to the shared dbCredentialsId /
+    // apiSecretEnv above.
+    //   dbCredentialsByEnv: [preprod: 'my-app-db-credentials-preprod']
+    //   apiSecretEnvByEnv : [preprod: [[envVar: 'JWT_SECRET', credentialId: '...-preprod']]]
+    Map dbCredentialsByEnv = config.dbCredentialsByEnv ?: [:]
+    Map apiSecretEnvByEnv  = config.apiSecretEnvByEnv  ?: [:]
+
     // Front-end domain per environment, so the API's FRONTEND_URL/CORS_ORIGINS and
     // the webapp's NEXT_PUBLIC_API_URL can be derived from the target environment
     // instead of being hard-coded to DEV by the calling Jenkinsfile.
@@ -388,7 +398,7 @@ void call(Map config = [:]) {
                 }
                 steps {
                     withCredentials([usernamePassword(
-                        credentialsId   : dbCredentialsId,
+                        credentialsId   : credentialIdFor(dbCredentialsByEnv, env.DEPLOY_ENV, dbCredentialsId),
                         usernameVariable: 'DB_USER',
                         passwordVariable: 'DB_PASSWORD'
                     )]) {
@@ -414,7 +424,7 @@ void call(Map config = [:]) {
                 }
                 steps {
                     withCredentials([usernamePassword(
-                        credentialsId   : dbCredentialsId,
+                        credentialsId   : credentialIdFor(dbCredentialsByEnv, env.DEPLOY_ENV, dbCredentialsId),
                         usernameVariable: 'DB_USER',
                         passwordVariable: 'DB_PASSWORD'
                     )]) {
@@ -448,8 +458,8 @@ void call(Map config = [:]) {
                             harborProject    : harborProject,
                             traefikNetwork   : traefikNetwork,
                             apiEnv           : apiEnvFor(apiEnv, frontDomains['dev']),
-                            apiSecretEnv     : apiSecretEnv,
-                            dbCredentialsId  : dbCredentialsId,
+                            apiSecretEnv     : apiSecretEnvFor(apiSecretEnvByEnv, 'dev', apiSecretEnv),
+                            dbCredentialsId  : credentialIdFor(dbCredentialsByEnv, 'dev', dbCredentialsId),
                             postgresContainer: "${projectName}-db-shared",
                             redisContainer   : redisContainerFor(projectName, 'dev'),
                             dbName           : "${projectName}_dev"
@@ -513,8 +523,8 @@ void call(Map config = [:]) {
                             harborProject    : harborProject,
                             traefikNetwork   : traefikNetwork,
                             apiEnv           : apiEnvFor(apiEnv, frontDomains['preprod']),
-                            apiSecretEnv     : apiSecretEnv,
-                            dbCredentialsId  : dbCredentialsId,
+                            apiSecretEnv     : apiSecretEnvFor(apiSecretEnvByEnv, 'preprod', apiSecretEnv),
+                            dbCredentialsId  : credentialIdFor(dbCredentialsByEnv, 'preprod', dbCredentialsId),
                             postgresContainer: "${projectName}-db-shared",
                             redisContainer   : redisContainerFor(projectName, 'preprod'),
                             dbName           : "${projectName}_preprod"
@@ -776,6 +786,18 @@ Map<String, String> apiEnvFor(Map<String, String> baseEnv, String frontDomain) {
         FRONTEND_URL: "https://${frontDomain}",
         CORS_ORIGINS: "https://${frontDomain}"
     ] + (baseEnv ?: [:])
+}
+
+// =============================================================================
+// Helper: Resolve a per-environment credential override, falling back to the
+// shared one. See dbCredentialsByEnv / apiSecretEnvByEnv in the config block.
+// =============================================================================
+String credentialIdFor(Map byEnv, String environment, String fallback) {
+    return byEnv?.get(environment) ?: fallback
+}
+
+List apiSecretEnvFor(Map byEnv, String environment, List fallback) {
+    return byEnv?.get(environment) ?: fallback
 }
 
 // =============================================================================
