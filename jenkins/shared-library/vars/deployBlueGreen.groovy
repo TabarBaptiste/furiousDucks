@@ -57,6 +57,10 @@ def call(Map config) {
     def greenContainer = "${projectName}-${environment}-green"
     def previousTag    = ''
     def routerName     = "${projectName}-${environment}"
+    // GREEN routes through its own higher-priority router on the same Host rule,
+    // so the switch is a real switchover rather than a load-balanced 50/50 split
+    // between the two versions (see "B/G - Switch Traffic").
+    def greenRouter    = "${routerName}-green"
 
     echo "=== Blue/Green Deployment ==="
     echo "Project    : ${projectName}"
@@ -133,45 +137,71 @@ def call(Map config) {
     stage("B/G - Switch Traffic") {
         echo "Switching Traefik routing from BLUE to GREEN..."
 
-        // Apply Traefik labels to GREEN container by recreating it with labels
-        // (Docker does not allow adding labels to a running container, so we
-        //  use the Traefik dynamic file provider or a label-update approach.)
+        // Docker cannot add labels to a running container, so GREEN is recreated
+        // from the same registry image with its Traefik labels attached. It is
+        // recreated from ${fullImage}, NOT from a `docker commit` of the running
+        // container: committing produced a host-local image, so production ended
+        // up running something that no longer matched any tag in Harbor and that
+        // rollback.sh could not pull back.
         //
-        // Strategy: stop GREEN, re-run with Traefik labels, then stop BLUE.
+        // GREEN gets its OWN router name, carrying a higher priority than BLUE's
+        // on the same Host rule. Reusing BLUE's router name (as this stage used
+        // to do) makes Traefik see two servers behind a single service and
+        // round-robin between the old and the new version - half of production
+        // traffic would reach an unvalidated GREEN for the entire monitoring
+        // window, which is the opposite of the "validate before switching"
+        // guarantee. With a distinct higher-priority router, Traefik sends
+        // everything to GREEN while BLUE stays up untouched, so simply removing
+        // GREEN falls straight back to BLUE.
         sh """
-            # Commit the running GREEN container to preserve its state
-            docker commit ${greenContainer} ${fullImage}-green-tmp
-
-            # Stop the unlabeled GREEN
             docker stop ${greenContainer}
             docker rm   ${greenContainer}
 
-            # Re-run GREEN with full Traefik labels
             docker run -d \
                 --name ${greenContainer} \
                 --restart unless-stopped \
                 --network ${traefikNetwork} \
                 --label "traefik.enable=true" \
-                --label "traefik.http.routers.${routerName}.rule=Host(\\`${domain}\\`)" \
-                --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
-                --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
-                --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
-                --label "traefik.http.routers.${routerName}.middlewares=secure-headers@file" \
+                --label "traefik.http.routers.${greenRouter}.rule=Host(\\`${domain}\\`)" \
+                --label "traefik.http.routers.${greenRouter}.priority=100" \
+                --label "traefik.http.routers.${greenRouter}.entrypoints=websecure" \
+                --label "traefik.http.routers.${greenRouter}.tls.certresolver=letsencrypt" \
+                --label "traefik.http.services.${greenRouter}.loadbalancer.server.port=${port}" \
+                --label "traefik.http.routers.${greenRouter}.middlewares=secure-headers@file" \
                 --label "deploy.tag=${imageTag}" \
                 -e NODE_ENV=production \
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
                 -e DEPLOYMENT_COLOR=green \
-                ${fullImage}-green-tmp
-
-            # Clean up temporary image
-            docker rmi ${fullImage}-green-tmp 2>/dev/null || true
-
-            # Wait a moment for Traefik to pick up the new labels
-            sleep 5
-
-            echo "Traffic is now routed to GREEN (${greenContainer})"
+                ${fullImage}
         """
+
+        // Re-check health on the labelled container: it is the one now taking
+        // real traffic, and it is a different container from the one validated
+        // at step 3. On failure, dropping GREEN restores BLUE immediately.
+        int switchExit = sh(
+            script: """
+                for i in \$(seq 1 ${(healthTimeout / healthInterval).intValue()}); do
+                    if docker run --rm --network ${traefikNetwork} curlimages/curl:latest \
+                        -sf "http://${greenContainer}:${port}${healthPath}" > /dev/null 2>&1; then
+                        exit 0
+                    fi
+                    sleep ${healthInterval}
+                done
+                exit 1
+            """,
+            returnStatus: true
+        )
+        if (switchExit != 0) {
+            sh """
+                docker logs --tail 100 ${greenContainer} || true
+                docker rm -f ${greenContainer} 2>/dev/null || true
+            """
+            error("GREEN failed its health check after the traffic switch - " +
+                "removed, traffic is back on BLUE (${blueContainer})")
+        }
+
+        echo "Traffic is now routed to GREEN (${greenContainer})"
     }
 
     // -------------------------------------------------------------------------
@@ -265,15 +295,16 @@ def call(Map config) {
     // -------------------------------------------------------------------------
     stage("B/G - Promote GREEN") {
         echo "Promoting GREEN to BLUE..."
+
+        // Docker cannot rename the router a container declares, so GREEN cannot
+        // simply be renamed to BLUE: the next deployment would then create a new
+        // GREEN declaring the same "-green" router as the promoted one. The new
+        // BLUE is therefore started from the registry image with the canonical
+        // router, and only once it is healthy is GREEN removed. GREEN keeps the
+        // higher priority until that moment, so traffic never lands on a BLUE
+        // that has not answered a health check - previously GREEN was torn down
+        // first, leaving the domain with no backend at all while BLUE booted.
         sh """
-            # Docker does not support renaming directly when Traefik labels are
-            # tied to the container name in the router rule. Instead we stop
-            # GREEN, re-run as BLUE with the same image and labels.
-            CURRENT_IMAGE=\$(docker inspect --format='{{.Config.Image}}' ${greenContainer})
-
-            docker stop ${greenContainer}
-            docker rm   ${greenContainer}
-
             docker run -d \
                 --name ${blueContainer} \
                 --restart unless-stopped \
@@ -290,20 +321,35 @@ def call(Map config) {
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
                 -e DEPLOYMENT_COLOR=blue \
-                \${CURRENT_IMAGE}
-
-            # Verify the new BLUE is healthy
-            for i in \$(seq 1 15); do
-                if docker run --rm --network ${traefikNetwork} curlimages/curl:latest \
-                    -sf "http://${blueContainer}:${port}${healthPath}" > /dev/null 2>&1; then
-                    echo "New BLUE container is healthy - deployment complete!"
-                    exit 0
-                fi
-                sleep 2
-            done
-
-            echo "WARNING: New BLUE container health check inconclusive - verify manually"
+                ${fullImage}
         """
+
+        int promoteExit = sh(
+            script: """
+                for i in \$(seq 1 15); do
+                    if docker run --rm --network ${traefikNetwork} curlimages/curl:latest \
+                        -sf "http://${blueContainer}:${port}${healthPath}" > /dev/null 2>&1; then
+                        exit 0
+                    fi
+                    sleep 2
+                done
+                exit 1
+            """,
+            returnStatus: true
+        )
+        if (promoteExit != 0) {
+            sh """
+                docker logs --tail 100 ${blueContainer} || true
+                docker rm -f ${blueContainer} 2>/dev/null || true
+            """
+            error("New BLUE failed its health check - removed, traffic stays on " +
+                "GREEN (${greenContainer}). Investigate before re-running the deployment.")
+        }
+
+        // BLUE is healthy and serving on the canonical router: retiring GREEN
+        // now hands all traffic over to it.
+        sh "docker rm -f ${greenContainer} 2>/dev/null || true"
+        echo 'New BLUE container is healthy - deployment complete!'
     }
 
     echo "=== Blue/Green Deployment Complete ==="
