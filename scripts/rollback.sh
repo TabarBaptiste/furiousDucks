@@ -30,6 +30,7 @@ set -euo pipefail
 REGISTRY="${REGISTRY:-registry.wk-archi-o24a-4-5-g1.fr}"
 HARBOR_PROJECT="${HARBOR_PROJECT:-furious-ducks}"
 NETWORK="${NETWORK:-workflow-network}"
+HEALTH_PATH="${HEALTH_PATH:-/health}"
 LOG_DIR="${LOG_DIR:-/var/log/deploy}"
 LOG_FILE="${LOG_DIR}/rollback-$(date +%Y%m%d-%H%M%S).log"
 
@@ -43,6 +44,30 @@ log() {
   local msg
   msg="$(date '+%Y-%m-%d %H:%M:%S') [${level}] $*"
   echo "${msg}" | tee -a "${LOG_FILE}"
+}
+
+# Probe a container's health endpoint from a throwaway curl sidecar on the same
+# Docker network, rather than reading `.State.Health.Status`. Two reasons: the
+# containers created by deployBlueGreen.groovy carry no --health-cmd at all, so
+# that status stays empty forever; and client images are expected to be minimal
+# (see the cahier des spécifications) and cannot be assumed to ship curl, so an
+# in-container health command could never report healthy either. Both rollback
+# paths below used to wait on that status and always timed out.
+wait_for_health() {
+  local container="$1"
+  local port="$2"
+  local timeout="${3:-60}"
+  local start
+  start="$(date +%s)"
+
+  while (( $(date +%s) - start < timeout )); do
+    if docker run --rm --network "${NETWORK}" curlimages/curl:latest \
+        -sf "http://${container}:${port}${HEALTH_PATH}" >> "${LOG_FILE}" 2>&1; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
 }
 
 usage() {
@@ -347,25 +372,12 @@ case "${ENVIRONMENT}" in
       log "INFO" "Found paused standby '${PAUSED_NAME}' (tag: ${PAUSED_TAG}) - restarting it instead of pulling from the registry"
       docker start "${PAUSED_NAME}" >> "${LOG_FILE}" 2>&1
 
-      HEALTH_TIMEOUT=60
-      HEALTH_START="$(date +%s)"
-      while true; do
-        ELAPSED=$(( $(date +%s) - HEALTH_START ))
-
-        if [[ ${ELAPSED} -ge ${HEALTH_TIMEOUT} ]]; then
-          log "ERROR" "Paused standby failed to become healthy - rollback aborted"
-          exit 1
-        fi
-
-        HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${PAUSED_NAME}" 2>/dev/null || echo 'unknown')"
-        if [[ "${HEALTH_STATUS}" == "healthy" ]]; then
-          break
-        elif [[ "${HEALTH_STATUS}" == "unhealthy" ]]; then
-          log "ERROR" "Paused standby is unhealthy - rollback aborted"
-          exit 1
-        fi
-        sleep 5
-      done
+      if ! wait_for_health "${PAUSED_NAME}" "${APP_PORT}" 60; then
+        log "ERROR" "Paused standby failed to become healthy - rollback aborted"
+        log "ERROR" "BLUE container left untouched and still serving traffic"
+        docker stop "${PAUSED_NAME}" >> "${LOG_FILE}" 2>&1 || true
+        exit 1
+      fi
 
       log "INFO" "Standby is healthy (already carries the Traefik labels) - switching over..."
       docker stop "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
@@ -389,11 +401,6 @@ case "${ENVIRONMENT}" in
         --name "${GREEN_NAME}" \
         --network "${NETWORK}" \
         --restart unless-stopped \
-        --health-cmd "curl -f http://localhost:${APP_PORT}/health || exit 1" \
-        --health-interval 10s \
-        --health-timeout 5s \
-        --health-retries 3 \
-        --health-start-period 30s \
         --label "traefik.enable=false" \
         --label "deploy.project=${PROJECT_NAME}" \
         --label "deploy.role=green" \
@@ -404,29 +411,12 @@ case "${ENVIRONMENT}" in
 
       # Wait for GREEN health check
       log "INFO" "Waiting for GREEN health check..."
-      HEALTH_TIMEOUT=120
-      HEALTH_START="$(date +%s)"
-
-      while true; do
-        ELAPSED=$(( $(date +%s) - HEALTH_START ))
-
-        if [[ ${ELAPSED} -ge ${HEALTH_TIMEOUT} ]]; then
-          log "ERROR" "GREEN health check timed out"
-          docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
-          log "ERROR" "BLUE container retained - rollback aborted"
-          exit 1
-        fi
-
-        HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
-        if [[ "${HEALTH_STATUS}" == "healthy" ]]; then
-          break
-        elif [[ "${HEALTH_STATUS}" == "unhealthy" ]]; then
-          log "ERROR" "GREEN container is unhealthy"
-          docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
-          exit 1
-        fi
-        sleep 5
-      done
+      if ! wait_for_health "${GREEN_NAME}" "${APP_PORT}" 120; then
+        log "ERROR" "GREEN health check timed out"
+        docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
+        log "ERROR" "BLUE container retained - rollback aborted"
+        exit 1
+      fi
 
       log "INFO" "GREEN is healthy. Switching Traefik routing..."
 
@@ -441,11 +431,6 @@ case "${ENVIRONMENT}" in
         --name "${GREEN_NAME}" \
         --network "${NETWORK}" \
         --restart unless-stopped \
-        --health-cmd "curl -f http://localhost:${APP_PORT}/health || exit 1" \
-        --health-interval 10s \
-        --health-timeout 5s \
-        --health-retries 3 \
-        --health-start-period 30s \
         --label "traefik.enable=true" \
         --label "traefik.http.routers.${ROUTER_NAME}.rule=Host(\`${DOMAIN}\`)" \
         --label "traefik.http.routers.${ROUTER_NAME}.entrypoints=websecure" \
@@ -460,17 +445,7 @@ case "${ENVIRONMENT}" in
         "${ROLLBACK_IMAGE}" >> "${LOG_FILE}" 2>&1
 
       # Wait for healthy again
-      sleep 10
-      HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
-      RETRIES=0
-
-      while [[ "${HEALTH_STATUS}" != "healthy" && ${RETRIES} -lt 24 ]]; do
-        sleep 5
-        (( RETRIES++ ))
-        HEALTH_STATUS="$(docker inspect --format='{{.State.Health.Status}}' "${GREEN_NAME}" 2>/dev/null || echo 'unknown')"
-      done
-
-      if [[ "${HEALTH_STATUS}" != "healthy" ]]; then
+      if ! wait_for_health "${GREEN_NAME}" "${APP_PORT}" 120; then
         log "ERROR" "GREEN failed to become healthy after routing switch"
         docker rm -f "${GREEN_NAME}" >> "${LOG_FILE}" 2>&1 || true
         docker start "${BLUE_NAME}" >> "${LOG_FILE}" 2>&1 || true
