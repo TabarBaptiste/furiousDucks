@@ -84,4 +84,20 @@ ciPipeline(
         [envVar: 'JWT_SECRET', credentialId: 'thetiptop-jwt-secret'],
         [envVar: 'JWT_REFRESH_SECRET', credentialId: 'thetiptop-jwt-refresh-secret']
     ]
+
+    // The CST (2.9) requires a distinct credential set per environment. The pilot
+    // project deliberately runs DEV and PREPROD on the single shared set above:
+    // splitting them triples the number of Jenkins credentials to create, store
+    // and rotate for no benefit at this scale. To split them later, create the
+    // PREPROD credentials in Jenkins and uncomment:
+    //
+    // dbCredentialsByEnv: [
+    //     preprod: 'thetiptop-db-credentials-preprod'
+    // ],
+    // apiSecretEnvByEnv : [
+    //     preprod: [
+    //         [envVar: 'JWT_SECRET', credentialId: 'thetiptop-jwt-secret-preprod'],
+    //         [envVar: 'JWT_REFRESH_SECRET', credentialId: 'thetiptop-jwt-refresh-secret-preprod']
+    //     ]
+    // ]
 )
