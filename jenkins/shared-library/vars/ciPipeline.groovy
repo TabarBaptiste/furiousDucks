@@ -61,6 +61,9 @@ void call(Map config = [:]) {
     boolean runE2E         = config.runE2E         ?: false
     boolean runK6          = config.runK6          ?: false
 
+    // Post-deploy stability watch on PREPROD, in minutes (CST: "5 min métriques").
+    int preprodMonitorMinutes = config.preprodMonitorMinutes ?: 5
+
     // Domains
     // DEV/PREPROD are internal workflow environments -> wk-* (platform domain).
     // PROD is the delivered client site -> dsp5-* (site internet domain), per
@@ -582,6 +585,34 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Monitor PREPROD
+            // The CST asks for 5 minutes of post-deploy metrics on PREPROD with
+            // an automatic rollback if the health check fails. It runs after the
+            // E2E and K6 stages on purpose: instability shows up once the load
+            // test has actually stressed the container, not on an idle one.
+            // =================================================================
+            stage('Monitor PREPROD') {
+                when {
+                    expression { return env.DEPLOY_ENV == 'preprod' && deployPreprod }
+                }
+                steps {
+                    script {
+                        monitorDeployment(
+                            containerName : "${projectName}-preprod",
+                            environment   : 'preprod',
+                            imageProjectName: projectName,
+                            domain        : preprodDomain,
+                            port          : appPort,
+                            registry      : registry,
+                            harborProject : harborProject,
+                            traefikNetwork: traefikNetwork,
+                            minutes       : preprodMonitorMinutes
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
             // STAGE: Approval PROD
             // =================================================================
             stage('Approval PROD') {
@@ -721,6 +752,88 @@ Map<String, String> apiEnvFor(Map<String, String> baseEnv, String frontDomain) {
 }
 
 // =============================================================================
+// Helper: Watch a freshly deployed container for a few minutes and roll it back
+// if it degrades. The CST asks for 5 minutes of post-deploy metrics on PREPROD
+// with an automatic rollback on a failed health check; deployContainer only
+// checks health once, at startup, so nothing caught a container that died a
+// couple of minutes later.
+//
+// Tolerates isolated blips (a single failed probe is not a rollback) but reacts
+// to three consecutive failures, keeping the rollback inside the CST's
+// "under a minute" budget.
+// =============================================================================
+void monitorDeployment(Map args) {
+    int minutes = args.minutes ?: 5
+    if (minutes <= 0) {
+        echo 'Post-deploy monitoring disabled (minutes <= 0)'
+        return
+    }
+
+    String containerName = args.containerName
+    String healthPath = args.healthPath ?: '/health'
+    int checkInterval = 15
+    int checks = ((minutes * 60) / checkInterval).intValue()
+
+    echo "Monitoring ${containerName} for ${minutes} minutes..."
+    int monitorExit = sh(
+        script: """
+            FAILURES=0
+            MAX_FAILURES=3
+
+            for i in \$(seq 1 ${checks}); do
+                if docker run --rm --network ${args.traefikNetwork} curlimages/curl:latest \
+                    -sf "http://${containerName}:${args.port}${healthPath}" > /dev/null 2>&1; then
+                    FAILURES=0
+                else
+                    FAILURES=\$((FAILURES + 1))
+                    echo "  WARNING: health check failed (\${FAILURES}/\${MAX_FAILURES})"
+                    if [ "\$FAILURES" -ge "\$MAX_FAILURES" ]; then
+                        echo "ERROR: ${containerName} degraded during monitoring"
+                        docker logs --tail 100 ${containerName} || true
+                        exit 1
+                    fi
+                fi
+                sleep ${checkInterval}
+            done
+        """,
+        returnStatus: true
+    )
+
+    if (monitorExit == 0) {
+        echo "${containerName} stayed healthy for ${minutes} minutes"
+        return
+    }
+
+    String previousTag = sh(
+        script: "docker inspect --format='{{index .Config.Labels \"deploy.previous-tag\"}}' ${containerName} 2>/dev/null || true",
+        returnStdout: true
+    ).trim()
+    if (previousTag == '<no value>') { previousTag = '' }
+
+    if (!previousTag) {
+        error("${containerName} degraded during post-deploy monitoring and no " +
+            'previous version is recorded to roll back to.')
+    }
+
+    echo "Rolling ${containerName} back to ${previousTag}"
+    deployContainer(
+        containerName   : containerName,
+        imageProjectName: args.imageProjectName,
+        projectName     : args.imageProjectName,
+        environment     : args.environment,
+        imageTag        : previousTag,
+        domain          : args.domain,
+        port            : args.port,
+        healthPath      : healthPath,
+        registry        : args.registry,
+        harborProject   : args.harborProject,
+        traefikNetwork  : args.traefikNetwork
+    )
+    error("${containerName} degraded during post-deploy monitoring and was " +
+        "rolled back to ${previousTag}.")
+}
+
+// =============================================================================
 // Helper: Deploy a container with Traefik labels
 //
 // The post-deploy health check probes the container from a throwaway curl
@@ -743,6 +856,18 @@ void deployContainer(Map args) {
     Map<String, String> extraEnv = args.extraEnv ?: [:]
     String extraEnvFlags = extraEnv.collect { k, v -> "-e ${k}=\"${v}\"" }.join(' ')
 
+    // Tag currently in service, captured before the container is replaced. It is
+    // written back as a deploy.previous-tag label so both the auto-rollback below
+    // and scripts/rollback.sh can find the version to fall back to without the
+    // operator having to know it. deployBlueGreen.groovy already did this for
+    // PROD; DEV/PREPROD carried no deploy.* labels at all, which left
+    // rollback.sh's auto-detection with nothing to read.
+    String previousTag = sh(
+        script: "docker inspect --format='{{index .Config.Labels \"deploy.tag\"}}' ${containerName} 2>/dev/null || true",
+        returnStdout: true
+    ).trim()
+    if (previousTag == '<no value>') { previousTag = '' }
+
     sh """
         echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${args.registry} \
             -u "\${HARBOR_CREDENTIALS_USR}" --password-stdin
@@ -762,27 +887,77 @@ void deployContainer(Map args) {
             --label "traefik.http.routers.${containerName}.tls.certresolver=letsencrypt" \
             --label "traefik.http.services.${containerName}.loadbalancer.server.port=${args.port}" \
             --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file" \
+            --label "deploy.project=${imageProjectName}" \
+            --label "deploy.environment=${args.environment}" \
+            --label "deploy.tag=${args.imageTag}" \
+            --label "deploy.previous-tag=${previousTag}" \
             -e NODE_ENV=${nodeEnv} \
             -e APP_ENV=${args.environment} \
             ${extraEnvFlags} \
             ${fullImage}
         set -x
-
-        echo "Waiting for ${containerName} to become healthy..."
-        for i in \$(seq 1 30); do
-            if docker run --rm --network ${args.traefikNetwork} curlimages/curl:latest \
-                -sf "http://${containerName}:${args.port}${healthPath}" > /dev/null 2>&1; then
-                echo "${containerName} is healthy"
-                break
-            fi
-            if [ "\$i" -eq 30 ]; then
-                echo "ERROR: ${containerName} failed health check after 30 attempts"
-                docker logs ${containerName}
-                exit 1
-            fi
-            sleep 2
-        done
     """
+
+    int healthExit = sh(
+        script: """
+            echo "Waiting for ${containerName} to become healthy..."
+            for i in \$(seq 1 30); do
+                if docker run --rm --network ${args.traefikNetwork} curlimages/curl:latest \
+                    -sf "http://${containerName}:${args.port}${healthPath}" > /dev/null 2>&1; then
+                    echo "${containerName} is healthy"
+                    exit 0
+                fi
+                sleep 2
+            done
+            echo "ERROR: ${containerName} failed health check after 30 attempts"
+            docker logs --tail 100 ${containerName} || true
+            exit 1
+        """,
+        returnStatus: true
+    )
+
+    if (healthExit == 0) { return }
+
+    // The CST requires an automatic rollback on a failed health check in DEV and
+    // PREPROD (under a minute). Without a previous tag - a first deployment -
+    // there is nothing to fall back to, so the build simply fails as before.
+    if (!previousTag) {
+        error("${containerName} failed its health check and no previous version " +
+            'is recorded to roll back to (first deployment?).')
+    }
+
+    echo "${containerName} failed its health check - rolling back to ${previousTag}"
+    String rollbackImage = "${args.registry}/${harborProject}/${imageProjectName}:${previousTag}"
+    sh """
+        echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${args.registry} \
+            -u "\${HARBOR_CREDENTIALS_USR}" --password-stdin
+        docker pull ${rollbackImage}
+        docker logout ${args.registry}
+        docker rm -f ${containerName} 2>/dev/null || true
+
+        set +x
+        docker run -d \
+            --name ${containerName} \
+            --restart unless-stopped \
+            --network ${args.traefikNetwork} \
+            --label "traefik.enable=true" \
+            --label "traefik.http.routers.${containerName}.rule=Host(\\`${args.domain}\\`)" \
+            --label "traefik.http.routers.${containerName}.entrypoints=websecure" \
+            --label "traefik.http.routers.${containerName}.tls.certresolver=letsencrypt" \
+            --label "traefik.http.services.${containerName}.loadbalancer.server.port=${args.port}" \
+            --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file" \
+            --label "deploy.project=${imageProjectName}" \
+            --label "deploy.environment=${args.environment}" \
+            --label "deploy.tag=${previousTag}" \
+            --label "deploy.rollback=true" \
+            -e NODE_ENV=${nodeEnv} \
+            -e APP_ENV=${args.environment} \
+            ${extraEnvFlags} \
+            ${rollbackImage}
+        set -x
+    """
+    error("${containerName} failed its health check on ${args.imageTag} and was " +
+        "rolled back to ${previousTag}.")
 }
 
 // =============================================================================
