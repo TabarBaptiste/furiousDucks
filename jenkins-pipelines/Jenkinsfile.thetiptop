@@ -45,15 +45,21 @@ ciPipeline(
     k6Duration    : '5m',
 
     // Backend API (NestJS), deployed alongside the frontend.
-    // Currently only wired for DEV - PREPROD/PROD follow once validated.
+    // Wired for DEV and PREPROD - PROD follows once validated.
     apiDockerfile  : 'api/Dockerfile',
     apiPort        : 3001,
     apiHealthPath  : '/api/v1/health',
     dbCredentialsId: 'thetiptop-db-credentials',   // Jenkins "username/password" cred
+
+    // API domains (one per environment)
+    devApiDomain    : "${projectName}-api-dev.wk-archi-o24a-4-5-g1.fr",
+    preprodApiDomain: "${projectName}-api-preprod.wk-archi-o24a-4-5-g1.fr",
+
+    // Environment-independent API variables only. FRONTEND_URL and CORS_ORIGINS
+    // are derived by the shared library from the target environment's frontend
+    // domain - hard-coding them here pinned PREPROD to the DEV domain.
     apiEnv         : [
-        FRONTEND_URL: "https://${projectName}-dev.wk-archi-o24a-4-5-g1.fr",
-        CORS_ORIGINS: "https://${projectName}-dev.wk-archi-o24a-4-5-g1.fr",
-        API_PREFIX  : 'api'
+        API_PREFIX: 'api'
     ],
     apiSecretEnv   : [
         [envVar: 'JWT_SECRET', credentialId: 'thetiptop-jwt-secret'],
