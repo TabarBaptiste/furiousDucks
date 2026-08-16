@@ -21,15 +21,19 @@
 //       k6Duration  : '3m',
 //
 //       // Optional: separate backend API, deployed alongside the frontend.
-//       // Only wired for DEV so far - PREPROD/PROD follow once validated.
+//       // Wired for DEV and PREPROD - PROD follows once validated.
 //       apiDockerfile : 'api/Dockerfile',
 //       apiPort       : 3001,
 //       apiHealthPath : '/api/health',
-//       devApiDomain  : 'my-app-api-dev.wk-archi-o24a-4-5-g1.fr',
+//       devApiDomain    : 'my-app-api-dev.wk-archi-o24a-4-5-g1.fr',
+//       preprodApiDomain: 'my-app-api-preprod.wk-archi-o24a-4-5-g1.fr',
 //       dbCredentialsId: 'my-app-db-credentials',   // Jenkins "username/password" cred
 //                                                    // -> also used to build DATABASE_URL
 //                                                    //    and REDIS_HOST/PORT automatically
-//       apiEnv        : [FRONTEND_URL: 'https://my-app-dev.wk-archi-o24a-4-5-g1.fr'],
+//       apiEnv        : [API_PREFIX: 'api'],        // environment-INDEPENDENT vars only:
+//                                                    // FRONTEND_URL and CORS_ORIGINS are
+//                                                    // derived from the target environment's
+//                                                    // frontend domain (see apiEnvFor)
 //       apiSecretEnv  : [                             // pulled from Jenkins credentials
 //           [envVar: 'JWT_SECRET', credentialId: 'my-app-jwt-secret']
 //       ]
@@ -82,16 +86,24 @@ void call(Map config = [:]) {
     String traefikNetwork = config.traefikNetwork ?: 'workflow-network'
 
     // -------------------------------------------------------------------------
-    // Optional separate backend API (currently only wired for DEV)
+    // Optional separate backend API (wired for DEV and PREPROD)
     // -------------------------------------------------------------------------
     String apiDockerfile  = config.apiDockerfile
     boolean hasApi        = apiDockerfile != null
     int apiPort           = config.apiPort         ?: 3001
     String apiHealthPath  = config.apiHealthPath   ?: '/api/health'
     String devApiDomain   = config.devApiDomain    ?: (hasApi ? "${projectName}-api-dev.wk-archi-o24a-4-5-g1.fr" : null)
+    String preprodApiDomain = config.preprodApiDomain ?:
+        (hasApi ? "${projectName}-api-preprod.wk-archi-o24a-4-5-g1.fr" : null)
     String dbCredentialsId = config.dbCredentialsId ?: "${projectName}-db-credentials"
     Map<String, String> apiEnv = config.apiEnv ?: [:]
     List apiSecretEnv     = config.apiSecretEnv ?: []
+
+    // Front-end domain per environment, so the API's FRONTEND_URL/CORS_ORIGINS and
+    // the webapp's NEXT_PUBLIC_API_URL can be derived from the target environment
+    // instead of being hard-coded to DEV by the calling Jenkinsfile.
+    Map<String, String> frontDomains = [dev: devDomain, preprod: preprodDomain, prod: prodDomain]
+    Map<String, String> apiDomains   = [dev: devApiDomain, preprod: preprodApiDomain]
 
     // -------------------------------------------------------------------------
     // Pipeline Definition
@@ -147,6 +159,23 @@ void call(Map config = [:]) {
                             '/var/lib/docker/volumes/common-jenkins-data-ci/_data'
                         env.HOST_WORKSPACE = env.WORKSPACE.replace('/var/jenkins_home', jenkinsHomeHost)
                         echo "Host workspace: ${env.HOST_WORKSPACE}"
+
+                        // Single source of truth for "which environment does this
+                        // build target", derived once here and read by every
+                        // environment-scoped stage below. Empty on branches that
+                        // deploy nowhere (feature/*, release/*, ...).
+                        env.DEPLOY_ENV = deployEnvFor(env.BRANCH_NAME, env.TAG_NAME) ?: ''
+                        echo "Deploy environment: ${env.DEPLOY_ENV ?: '(none)'}"
+
+                        // The API/database stages are wired for DEV and PREPROD only.
+                        // Fail fast rather than let a PROD deployment ship a frontend
+                        // with no backend behind it.
+                        if (hasApi && deployProd && env.DEPLOY_ENV == 'prod') {
+                            error('PROD deployment of the separate backend API is not wired yet ' +
+                                '(no Deploy PROD API stage, no PROD database). Deploying the ' +
+                                'frontend alone would leave it without an API. Remove ' +
+                                'apiDockerfile or wire the PROD API stages before tagging.')
+                        }
                     }
                 }
             }
@@ -231,10 +260,13 @@ void call(Map config = [:]) {
                         // NEXT_PUBLIC_API_URL is a Next.js *build-time* variable, baked
                         // into the client bundle - it must be passed as a --build-arg
                         // here, not as a runtime -e on `docker run` (deployContainer()).
-                        // Only wired for DEV so far; PREPROD/PROD follow once validated.
+                        // It must point at the API domain of the environment this image
+                        // is being built for, otherwise the PREPROD bundle ships either
+                        // no API URL at all or the DEV one.
                         Map<String, String> webappBuildArgs = [:]
-                        if (hasApi && env.BRANCH_NAME == 'develop') {
-                            webappBuildArgs['NEXT_PUBLIC_API_URL'] = "https://${devApiDomain}/api/v1"
+                        String targetApiDomain = apiDomains[env.DEPLOY_ENV]
+                        if (hasApi && targetApiDomain) {
+                            webappBuildArgs['NEXT_PUBLIC_API_URL'] = "https://${targetApiDomain}/api/v1"
                         }
                         echo "Building ${env.DOCKER_IMAGE}:${env.IMAGE_TAG}"
                         buildDockerImage(
@@ -248,11 +280,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Docker Build API (optional separate backend, DEV only)
+            // STAGE: Docker Build API (optional separate backend, DEV + PREPROD)
             // =================================================================
             stage('Docker Build API') {
                 when {
-                    expression { return hasApi && env.BRANCH_NAME == 'develop' }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     script {
@@ -284,11 +316,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Trivy Security Scan API (optional separate backend, DEV only)
+            // STAGE: Trivy Security Scan API (optional separate backend, DEV + PREPROD)
             // =================================================================
             stage('Trivy Scan API') {
                 when {
-                    expression { return hasApi && env.BRANCH_NAME == 'develop' }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     trivyScan("${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.HOST_WORKSPACE)
@@ -312,11 +344,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Docker Push API (optional separate backend, DEV only)
+            // STAGE: Docker Push API (optional separate backend, DEV + PREPROD)
             // =================================================================
             stage('Docker Push API') {
                 when {
-                    expression { return hasApi && env.BRANCH_NAME == 'develop' }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     pushDockerImage(registry, "${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
@@ -336,14 +368,17 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Ensure DEV Database (optional separate backend, DEV only)
-            // Postgres + Redis are shared across DEV/PREPROD and provisioned
-            // once, idempotently - never recreated on every build, since that
-            // would wipe data. PROD gets its own isolated instance later.
+            // STAGE: Ensure Database (optional separate backend, DEV + PREPROD)
+            // Postgres is shared across DEV/PREPROD - one container, one
+            // database per environment - and provisioned once, idempotently:
+            // never recreated on every build, since that would wipe data.
+            // Redis gets a dedicated container per environment instead, so the
+            // two environments cannot collide on the same keyspace (sessions,
+            // cache). PROD gets its own isolated instances later.
             // =================================================================
-            stage('Ensure DEV Database') {
+            stage('Ensure Database') {
                 when {
-                    expression { return env.BRANCH_NAME == 'develop' && deployDev && hasApi }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod) }
                 }
                 steps {
                     withCredentials([usernamePassword(
@@ -353,8 +388,8 @@ void call(Map config = [:]) {
                     )]) {
                         ensureSharedDatabase(
                             postgresContainer: "${projectName}-db-shared",
-                            redisContainer   : "${projectName}-redis-shared",
-                            dbName           : "${projectName}_dev",
+                            redisContainer   : redisContainerFor(projectName, env.DEPLOY_ENV),
+                            dbName           : "${projectName}_${env.DEPLOY_ENV}",
                             traefikNetwork   : traefikNetwork
                         )
                     }
@@ -362,14 +397,14 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Run Prisma Migrations (optional separate backend, DEV only)
-            // Applies pending migrations to the freshly-provisioned DEV database
+            // STAGE: Run Prisma Migrations (optional separate backend, DEV + PREPROD)
+            // Applies pending migrations to the freshly-provisioned database
             // before the API container starts, so it doesn't crash hitting
             // tables that don't exist yet on a brand new database.
             // =================================================================
             stage('Run Prisma Migrations') {
                 when {
-                    expression { return env.BRANCH_NAME == 'develop' && deployDev && hasApi }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod) }
                 }
                 steps {
                     withCredentials([usernamePassword(
@@ -381,7 +416,7 @@ void call(Map config = [:]) {
                             hostWorkspace    : env.HOST_WORKSPACE,
                             traefikNetwork   : traefikNetwork,
                             postgresContainer: "${projectName}-db-shared",
-                            dbName           : "${projectName}_dev"
+                            dbName           : "${projectName}_${env.DEPLOY_ENV}"
                         )
                     }
                 }
@@ -392,24 +427,25 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Deploy DEV API') {
                 when {
-                    expression { return env.BRANCH_NAME == 'develop' && deployDev && hasApi }
+                    expression { return env.DEPLOY_ENV == 'dev' && deployDev && hasApi }
                 }
                 steps {
                     script {
                         deployApiContainer(
                             projectName      : projectName,
-                            devApiDomain     : devApiDomain,
+                            environment      : 'dev',
+                            apiDomain        : devApiDomain,
                             apiPort          : apiPort,
                             apiHealthPath    : apiHealthPath,
                             imageTag         : env.IMAGE_TAG,
                             registry         : registry,
                             harborProject    : harborProject,
                             traefikNetwork   : traefikNetwork,
-                            apiEnv           : apiEnv,
+                            apiEnv           : apiEnvFor(apiEnv, frontDomains['dev']),
                             apiSecretEnv     : apiSecretEnv,
                             dbCredentialsId  : dbCredentialsId,
                             postgresContainer: "${projectName}-db-shared",
-                            redisContainer   : "${projectName}-redis-shared",
+                            redisContainer   : redisContainerFor(projectName, 'dev'),
                             dbName           : "${projectName}_dev"
                         )
                     }
@@ -450,13 +486,45 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Deploy PREPROD API (optional separate backend)
+            // Deployed before the frontend so the latter never serves a page
+            // whose API calls have nothing to answer them.
+            // =================================================================
+            stage('Deploy PREPROD API') {
+                when {
+                    expression { return env.DEPLOY_ENV == 'preprod' && deployPreprod && hasApi }
+                }
+                steps {
+                    script {
+                        deployApiContainer(
+                            projectName      : projectName,
+                            environment      : 'preprod',
+                            apiDomain        : preprodApiDomain,
+                            apiPort          : apiPort,
+                            apiHealthPath    : apiHealthPath,
+                            imageTag         : env.IMAGE_TAG,
+                            registry         : registry,
+                            harborProject    : harborProject,
+                            traefikNetwork   : traefikNetwork,
+                            apiEnv           : apiEnvFor(apiEnv, frontDomains['preprod']),
+                            apiSecretEnv     : apiSecretEnv,
+                            dbCredentialsId  : dbCredentialsId,
+                            postgresContainer: "${projectName}-db-shared",
+                            redisContainer   : redisContainerFor(projectName, 'preprod'),
+                            dbName           : "${projectName}_preprod"
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
             // STAGE: Deploy PREPROD
             // Deployed before E2E/K6 so those suites validate the freshly
             // promoted PREPROD build (iso-prod), per the CST deployment process.
             // =================================================================
             stage('Deploy PREPROD') {
                 when {
-                    expression { return env.BRANCH_NAME == 'main' && deployPreprod }
+                    expression { return env.DEPLOY_ENV == 'preprod' && deployPreprod }
                 }
                 steps {
                     deployContainer(
@@ -605,6 +673,54 @@ String urlEncode(String value) {
 }
 
 // =============================================================================
+// Helper: Which environment a build targets, derived from its branch or tag,
+// per the GitFlow mapping in the CST (develop -> DEV, main -> PREPROD,
+// semver tag -> PROD). Returns null for branches that deploy nowhere
+// (feature/*, release/*, hotfix/* before they are merged).
+// =============================================================================
+String deployEnvFor(String branchName, String tagName) {
+    if ((tagName ?: '') ==~ /v\d+\.\d+\.\d+.*/) { return 'prod' }
+    if (branchName == 'main')    { return 'preprod' }
+    if (branchName == 'develop') { return 'dev' }
+    return null
+}
+
+// =============================================================================
+// Helper: Is deployment enabled for this environment? Lets the shared
+// DEV/PREPROD stages honour the caller's per-environment deploy toggles
+// without duplicating the stage for each environment.
+// =============================================================================
+boolean deployFor(String environment, boolean deployDev, boolean deployPreprod) {
+    return environment == 'dev' ? deployDev : deployPreprod
+}
+
+// =============================================================================
+// Helper: Redis container name for an environment. DEV was provisioned before
+// PREPROD existed, under the "-shared" name; it keeps that name so an existing
+// DEV Redis is never recreated (which would drop its data). Every other
+// environment gets its own container, so DEV and PREPROD cannot collide on the
+// same keyspace.
+// =============================================================================
+String redisContainerFor(String projectName, String environment) {
+    return environment == 'dev' ? "${projectName}-redis-shared" : "${projectName}-redis-${environment}"
+}
+
+// =============================================================================
+// Helper: Build the API's environment variables for a target environment.
+// FRONTEND_URL and CORS_ORIGINS always point at that environment's own
+// frontend, so they are derived here rather than hard-coded by the calling
+// Jenkinsfile - which previously pinned both to the DEV domain, making the
+// API reject the PREPROD frontend on CORS. A caller that sets either key
+// explicitly still wins.
+// =============================================================================
+Map<String, String> apiEnvFor(Map<String, String> baseEnv, String frontDomain) {
+    return [
+        FRONTEND_URL: "https://${frontDomain}",
+        CORS_ORIGINS: "https://${frontDomain}"
+    ] + (baseEnv ?: [:])
+}
+
+// =============================================================================
 // Helper: Deploy a container with Traefik labels
 //
 // The post-deploy health check probes the container from a throwaway curl
@@ -619,7 +735,10 @@ void deployContainer(Map args) {
     String harborProject = args.harborProject ?: 'furious-ducks'
     String imageProjectName = args.imageProjectName ?: args.projectName
     String fullImage = "${args.registry}/${harborProject}/${imageProjectName}:${args.imageTag}"
-    String nodeEnv = args.environment == 'prod' ? 'production' : args.environment
+    // PREPROD runs in production mode too: the CST requires it to be iso-prod
+    // (same images, same runtime configuration), and Next.js/Nest only apply
+    // their production behaviour when NODE_ENV is literally 'production'.
+    String nodeEnv = args.environment in ['prod', 'preprod'] ? 'production' : args.environment
     String healthPath = args.healthPath ?: '/health'
     Map<String, String> extraEnv = args.extraEnv ?: [:]
     String extraEnvFlags = extraEnv.collect { k, v -> "-e ${k}=\"${v}\"" }.join(' ')
@@ -667,7 +786,7 @@ void deployContainer(Map args) {
 }
 
 // =============================================================================
-// Helper: Deploy the optional backend API container (DEV only for now)
+// Helper: Deploy the optional backend API container (DEV and PREPROD)
 // Kept separate from the pipeline stage body so the "apiSecretEnv may be
 // empty" branching (withCredentials rejects an empty binding list) doesn't
 // clutter the Jenkinsfile-visible stage steps.
@@ -705,11 +824,11 @@ void deployApiContainer(Map args) {
         }
         deployContainer(
             projectName     : args.projectName,
-            containerName   : "${args.projectName}-api-dev",
+            containerName   : "${args.projectName}-api-${args.environment}",
             imageProjectName: "${args.projectName}-api",
-            environment     : 'dev',
+            environment     : args.environment,
             imageTag        : args.imageTag,
-            domain          : args.devApiDomain,
+            domain          : args.apiDomain,
             port            : args.apiPort,
             healthPath      : args.apiHealthPath,
             registry        : args.registry,
