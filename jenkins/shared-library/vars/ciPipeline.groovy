@@ -1466,7 +1466,7 @@ void waitForQualityGateResult() {
             waitForQualityGate abortPipeline: false
         }
     } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
-        echo 'Quality Gate timeout - continuing pipeline (non-blocking on develop)'
+        echo 'Quality Gate timeout - continuing pipeline (quality gate is non-blocking)'
         currentBuild.result = 'UNSTABLE'
     }
 }
@@ -1577,14 +1577,32 @@ void runGitleaks(String hostWorkspace) {
     echo 'Gitleaks passed - no secrets detected'
 }
 
-void runE2ETests(String framework, String hostWorkspace, String traefikNetwork, String devDomain) {
+// The domain argument is whichever environment the suite runs against - DEV or
+// PREPROD depending on the calling stage - not necessarily the DEV one.
+void runE2ETests(String framework, String hostWorkspace, String traefikNetwork, String targetDomain) {
+    // Check the project actually ships an E2E suite before starting the runner.
+    // Playwright reports "0 tests" and exits non-zero when it finds none, which
+    // surfaces in the build log as a bare "script returned exit code 1" with no
+    // hint that the suite is simply missing from the project.
+    List<String> configCandidates = framework == 'playwright'
+        ? ['playwright.config.ts', 'playwright.config.js', 'playwright.config.mjs',
+           'webapp/playwright.config.ts', 'webapp/playwright.config.js']
+        : ['cypress.config.ts', 'cypress.config.js', 'cypress.json',
+           'webapp/cypress.config.ts', 'webapp/cypress.config.js']
+
+    if (!configCandidates.any { candidate -> fileExists(candidate) }) {
+        error("runE2E is enabled but no ${framework} configuration was found in this project " +
+            "(looked for: ${configCandidates.join(', ')}). Add an E2E suite, or set " +
+            'runE2E: false in the project Jenkinsfile until one exists.')
+    }
+
     if (framework == 'playwright') {
         sh """
             docker run --rm \
                 -v "${hostWorkspace}:/work" \
                 -w /work \
                 --network ${traefikNetwork} \
-                -e BASE_URL=https://${devDomain} \
+                -e BASE_URL=https://${targetDomain} \
                 mcr.microsoft.com/playwright:v1.48.0-jammy \
                 npx playwright test --reporter=junit,html
         """
@@ -1596,7 +1614,7 @@ void runE2ETests(String framework, String hostWorkspace, String traefikNetwork, 
             -v "${hostWorkspace}:/e2e" \
             -w /e2e \
             --network ${traefikNetwork} \
-            -e CYPRESS_BASE_URL=https://${devDomain} \
+            -e CYPRESS_BASE_URL=https://${targetDomain} \
             cypress/included:latest \
             --reporter junit \
             --reporter-options "mochaFile=reports/e2e-junit.xml"
@@ -1625,6 +1643,14 @@ void runK6Performance(Map config) {
     int k6Vus = config.k6Vus
     String k6Duration = config.k6Duration
     String k6Script = config.k6Script
+
+    // Same reasoning as runE2ETests: say what is missing instead of letting k6
+    // fail on an unreadable path deep inside a docker run.
+    if (!fileExists(k6Script)) {
+        error("runK6 is enabled but the K6 script '${k6Script}' was not found in this project. " +
+            'Add it, point k6Script at the right path, or set runK6: false in the project ' +
+            'Jenkinsfile until the script exists.')
+    }
 
     sh """
         docker run --rm \
