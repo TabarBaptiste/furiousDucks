@@ -1609,15 +1609,27 @@ void runE2ETests(String framework, String hostWorkspace, String traefikNetwork, 
         return
     }
 
+    // The Cypress config lives under webapp/ in this monorepo layout (same
+    // reason Lint/Unit Tests cd into "api" and "webapp"), not at the repo
+    // root - mounting the whole workspace but pointing cypress/included at
+    // /e2e directly used to fail to find cypress.config.ts. And a plain
+    // CYPRESS_BASE_URL env var does NOT override Cypress's `baseUrl` config
+    // (Cypress only auto-maps case-exact CYPRESS_<configKey> env vars, e.g.
+    // CYPRESS_baseUrl) - it silently created an unused Cypress.env('BASE_URL')
+    // instead. `--config baseUrl=...` is the project's own established
+    // convention (see webapp's `test:e2e:staging` npm script) and is used
+    // here instead, so CI runs the exact same way a developer already does.
+    boolean cypressInWebapp = fileExists('webapp/cypress.config.ts') || fileExists('webapp/cypress.config.js')
+    String workDir = cypressInWebapp ? '/e2e/webapp' : '/e2e'
     sh """
         docker run --rm \
             -v "${hostWorkspace}:/e2e" \
-            -w /e2e \
+            -w ${workDir} \
             --network ${traefikNetwork} \
-            -e CYPRESS_BASE_URL=https://${targetDomain} \
             cypress/included:latest \
+            --config baseUrl=https://${targetDomain} \
             --reporter junit \
-            --reporter-options "mochaFile=reports/e2e-junit.xml"
+            --reporter-options "mochaFile=cypress/reports/e2e-junit.xml"
     """
 }
 
