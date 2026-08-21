@@ -41,6 +41,14 @@ http:
         burst: 50
         period: 1s
 
+    # -------------------------------------------------------------------------
+    # compress - gzip/brotli/zstd HTTP compression for static assets and
+    # responses. Traefik negotiates the encoding from the client's
+    # Accept-Encoding header automatically (brotli/zstd preferred over gzip).
+    # -------------------------------------------------------------------------
+    compress:
+      compress: {}
+
     # NOTE: basic-auth for admin endpoints is provided by the 'traefik-auth'
     # middleware defined via Docker labels on the Traefik container (it needs
     # the ${TRAEFIK_DASHBOARD_AUTH} value, and the file provider does not perform

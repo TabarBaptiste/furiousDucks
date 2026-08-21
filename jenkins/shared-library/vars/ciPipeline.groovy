@@ -972,7 +972,7 @@ void deployContainer(Map args) {
             --label "traefik.http.routers.${containerName}.entrypoints=websecure" \
             --label "traefik.http.routers.${containerName}.tls.certresolver=letsencrypt" \
             --label "traefik.http.services.${containerName}.loadbalancer.server.port=${args.port}" \
-            --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file" \
+            --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file,compress@file" \
             --label "deploy.project=${imageProjectName}" \
             --label "deploy.environment=${args.environment}" \
             --label "deploy.tag=${args.imageTag}" \
@@ -1031,7 +1031,7 @@ void deployContainer(Map args) {
             --label "traefik.http.routers.${containerName}.entrypoints=websecure" \
             --label "traefik.http.routers.${containerName}.tls.certresolver=letsencrypt" \
             --label "traefik.http.services.${containerName}.loadbalancer.server.port=${args.port}" \
-            --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file" \
+            --label "traefik.http.routers.${containerName}.middlewares=secure-headers@file,compress@file" \
             --label "deploy.project=${imageProjectName}" \
             --label "deploy.environment=${args.environment}" \
             --label "deploy.tag=${previousTag}" \

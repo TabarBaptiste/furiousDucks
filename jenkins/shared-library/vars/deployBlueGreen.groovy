@@ -167,7 +167,7 @@ def call(Map config) {
                 --label "traefik.http.routers.${greenRouter}.entrypoints=websecure" \
                 --label "traefik.http.routers.${greenRouter}.tls.certresolver=letsencrypt" \
                 --label "traefik.http.services.${greenRouter}.loadbalancer.server.port=${port}" \
-                --label "traefik.http.routers.${greenRouter}.middlewares=secure-headers@file" \
+                --label "traefik.http.routers.${greenRouter}.middlewares=secure-headers@file,compress@file" \
                 --label "deploy.tag=${imageTag}" \
                 -e NODE_ENV=production \
                 -e APP_ENV=${environment} \
@@ -314,7 +314,7 @@ def call(Map config) {
                 --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
                 --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
                 --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
-                --label "traefik.http.routers.${routerName}.middlewares=secure-headers@file" \
+                --label "traefik.http.routers.${routerName}.middlewares=secure-headers@file,compress@file" \
                 --label "deploy.tag=${imageTag}" \
                 --label "deploy.previous-tag=${previousTag}" \
                 -e NODE_ENV=production \
@@ -400,7 +400,7 @@ def rollback(Map config) {
             --label "traefik.http.routers.${routerName}.entrypoints=websecure" \
             --label "traefik.http.routers.${routerName}.tls.certresolver=letsencrypt" \
             --label "traefik.http.services.${routerName}.loadbalancer.server.port=${port}" \
-            --label "traefik.http.routers.${routerName}.middlewares=secure-headers@file" \
+            --label "traefik.http.routers.${routerName}.middlewares=secure-headers@file,compress@file" \
             -e NODE_ENV=production \
             -e APP_ENV=${environment} \
             -e APP_VERSION=${previousTag} \
