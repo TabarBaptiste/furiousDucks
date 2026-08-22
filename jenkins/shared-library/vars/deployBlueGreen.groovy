@@ -328,6 +328,7 @@ def call(Map config) {
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
                 -e DEPLOYMENT_COLOR=blue \
+                ${extraEnvFlags} \
                 ${fullImage}
         """
 
@@ -377,6 +378,8 @@ def rollback(Map config) {
     def registry       = config.registry   ?: 'registry.wk-archi-o24a-4-5-g1.fr'
     def harborProject  = config.harborProject ?: 'furious-ducks'
     def traefikNetwork = config.traefikNetwork ?: 'workflow-network'
+    Map<String, String> extraEnv = config.extraEnv ?: [:]
+    String extraEnvFlags = extraEnv.collect { k, v -> "-e ${k}=\"${v}\"" }.join(' ')
 
     def blueContainer  = "${projectName}-${environment}-blue"
     def greenContainer = "${projectName}-${environment}-green"
@@ -412,6 +415,7 @@ def rollback(Map config) {
             -e APP_ENV=${environment} \
             -e APP_VERSION=${previousTag} \
             -e DEPLOYMENT_COLOR=blue \
+            ${extraEnvFlags} \
             ${fullImage}
 
         echo "Rollback complete - running ${previousTag}"
