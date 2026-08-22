@@ -107,6 +107,10 @@ void call(Map config = [:]) {
     String devApiDomain   = config.devApiDomain    ?: (hasApi ? "${projectName}-api-dev.wk-archi-o24a-4-5-g1.fr" : null)
     String preprodApiDomain = config.preprodApiDomain ?:
         (hasApi ? "${projectName}-api-preprod.wk-archi-o24a-4-5-g1.fr" : null)
+    // PROD API stays on the wk zone, not dsp5: dsp5 only hosts the frontend
+    // and has no wildcard certificate, while wk has one.
+    String prodApiDomain = config.prodApiDomain ?:
+        (hasApi ? "${projectName}-api.wk-archi-o24a-4-5-g1.fr" : null)
     String dbCredentialsId = config.dbCredentialsId ?: "${projectName}-db-credentials"
     Map<String, String> apiEnv = config.apiEnv ?: [:]
     List apiSecretEnv     = config.apiSecretEnv ?: []
@@ -125,7 +129,7 @@ void call(Map config = [:]) {
     // the webapp's NEXT_PUBLIC_API_URL can be derived from the target environment
     // instead of being hard-coded to DEV by the calling Jenkinsfile.
     Map<String, String> frontDomains = [dev: devDomain, preprod: preprodDomain, prod: prodDomain]
-    Map<String, String> apiDomains   = [dev: devApiDomain, preprod: preprodApiDomain]
+    Map<String, String> apiDomains   = [dev: devApiDomain, preprod: preprodApiDomain, prod: prodApiDomain]
 
     // -------------------------------------------------------------------------
     // Pipeline Definition
@@ -188,16 +192,6 @@ void call(Map config = [:]) {
                         // deploy nowhere (feature/*, release/*, ...).
                         env.DEPLOY_ENV = deployEnvFor(env.BRANCH_NAME, env.TAG_NAME) ?: ''
                         echo "Deploy environment: ${env.DEPLOY_ENV ?: '(none)'}"
-
-                        // The API/database stages are wired for DEV and PREPROD only.
-                        // Fail fast rather than let a PROD deployment ship a frontend
-                        // with no backend behind it.
-                        if (hasApi && deployProd && env.DEPLOY_ENV == 'prod') {
-                            error('PROD deployment of the separate backend API is not wired yet ' +
-                                '(no Deploy PROD API stage, no PROD database). Deploying the ' +
-                                'frontend alone would leave it without an API. Remove ' +
-                                'apiDockerfile or wire the PROD API stages before tagging.')
-                        }
                     }
                 }
             }
@@ -302,11 +296,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Docker Build API (optional separate backend, DEV + PREPROD)
+            // STAGE: Docker Build API (optional separate backend, DEV + PREPROD + PROD)
             // =================================================================
             stage('Docker Build API') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
                 }
                 steps {
                     script {
@@ -338,11 +332,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Trivy Security Scan API (optional separate backend, DEV + PREPROD)
+            // STAGE: Trivy Security Scan API (optional separate backend, DEV + PREPROD + PROD)
             // =================================================================
             stage('Trivy Scan API') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
                 }
                 steps {
                     trivyScan("${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.HOST_WORKSPACE)
@@ -366,11 +360,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Docker Push API (optional separate backend, DEV + PREPROD)
+            // STAGE: Docker Push API (optional separate backend, DEV + PREPROD + PROD)
             // =================================================================
             stage('Docker Push API') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
                 }
                 steps {
                     pushDockerImage(registry, "${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
@@ -390,17 +384,18 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Ensure Database (optional separate backend, DEV + PREPROD)
+            // STAGE: Ensure Database (optional separate backend, DEV + PREPROD + PROD)
             // Postgres is shared across DEV/PREPROD - one container, one
             // database per environment - and provisioned once, idempotently:
             // never recreated on every build, since that would wipe data.
             // Redis gets a dedicated container per environment instead, so the
             // two environments cannot collide on the same keyspace (sessions,
-            // cache). PROD gets its own isolated instances later.
+            // cache). PROD gets its own isolated Postgres + Redis containers
+            // (see dbContainerFor), never shared with DEV/PREPROD.
             // =================================================================
             stage('Ensure Database') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod) }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod, deployProd) }
                 }
                 steps {
                     withCredentials([usernamePassword(
@@ -409,7 +404,7 @@ void call(Map config = [:]) {
                         passwordVariable: 'DB_PASSWORD'
                     )]) {
                         ensureSharedDatabase(
-                            postgresContainer: "${projectName}-db-shared",
+                            postgresContainer: dbContainerFor(projectName, env.DEPLOY_ENV),
                             redisContainer   : redisContainerFor(projectName, env.DEPLOY_ENV),
                             dbName           : "${projectName}_${env.DEPLOY_ENV}",
                             traefikNetwork   : traefikNetwork
@@ -419,14 +414,14 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Run Prisma Migrations (optional separate backend, DEV + PREPROD)
+            // STAGE: Run Prisma Migrations (optional separate backend, DEV + PREPROD + PROD)
             // Applies pending migrations to the freshly-provisioned database
             // before the API container starts, so it doesn't crash hitting
             // tables that don't exist yet on a brand new database.
             // =================================================================
             stage('Run Prisma Migrations') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod) }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod, deployProd) }
                 }
                 steps {
                     withCredentials([usernamePassword(
@@ -437,7 +432,7 @@ void call(Map config = [:]) {
                         runPrismaMigrations(
                             hostWorkspace    : env.HOST_WORKSPACE,
                             traefikNetwork   : traefikNetwork,
-                            postgresContainer: "${projectName}-db-shared",
+                            postgresContainer: dbContainerFor(projectName, env.DEPLOY_ENV),
                             dbName           : "${projectName}_${env.DEPLOY_ENV}"
                         )
                     }
@@ -531,7 +526,7 @@ void call(Map config = [:]) {
                             apiEnv           : apiEnvFor(apiEnv, frontDomains['preprod']),
                             apiSecretEnv     : apiSecretEnvFor(apiSecretEnvByEnv, 'preprod', apiSecretEnv),
                             dbCredentialsId  : credentialIdFor(dbCredentialsByEnv, 'preprod', dbCredentialsId),
-                            postgresContainer: "${projectName}-db-shared",
+                            postgresContainer: dbContainerFor(projectName, 'preprod'),
                             redisContainer   : redisContainerFor(projectName, 'preprod'),
                             dbName           : "${projectName}_preprod"
                         )
@@ -682,6 +677,40 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Deploy PROD API (optional separate backend, Blue/Green)
+            // Deployed before the frontend, same rationale as the DEV/PREPROD
+            // API stages: the frontend must never go live pointing at an API
+            // that isn't there yet.
+            // =================================================================
+            stage('Deploy PROD API') {
+                when {
+                    expression { return hasApi && deployProd && (env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/) }
+                }
+                steps {
+                    script {
+                        deployApiBlueGreen(
+                            projectName      : projectName,
+                            environment      : 'prod',
+                            apiDomain        : prodApiDomain,
+                            apiPort          : apiPort,
+                            apiHealthPath    : apiHealthPath,
+                            imageTag         : env.IMAGE_TAG,
+                            registry         : registry,
+                            harborProject    : harborProject,
+                            traefikNetwork   : traefikNetwork,
+                            apiEnv           : apiEnvFor(apiEnv, frontDomains['prod']),
+                            apiSecretEnv     : apiSecretEnvFor(apiSecretEnvByEnv, 'prod', apiSecretEnv),
+                            dbCredentialsId  : credentialIdFor(dbCredentialsByEnv, 'prod', dbCredentialsId),
+                            postgresContainer: dbContainerFor(projectName, 'prod'),
+                            redisContainer   : redisContainerFor(projectName, 'prod'),
+                            dbName           : "${projectName}_prod",
+                            monitorMinutes   : 15
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
             // STAGE: Deploy PROD (Blue/Green)
             // =================================================================
             stage('Deploy PROD') {
@@ -765,8 +794,11 @@ String deployEnvFor(String branchName, String tagName) {
 // DEV/PREPROD stages honour the caller's per-environment deploy toggles
 // without duplicating the stage for each environment.
 // =============================================================================
-boolean deployFor(String environment, boolean deployDev, boolean deployPreprod) {
-    return environment == 'dev' ? deployDev : deployPreprod
+boolean deployFor(String environment, boolean deployDev, boolean deployPreprod, boolean deployProd) {
+    if (environment == 'dev')     { return deployDev }
+    if (environment == 'preprod') { return deployPreprod }
+    if (environment == 'prod')    { return deployProd }
+    return false
 }
 
 // =============================================================================
@@ -778,6 +810,16 @@ boolean deployFor(String environment, boolean deployDev, boolean deployPreprod) 
 // =============================================================================
 String redisContainerFor(String projectName, String environment) {
     return environment == 'dev' ? "${projectName}-redis-shared" : "${projectName}-redis-${environment}"
+}
+
+// =============================================================================
+// Helper: Postgres container name for an environment. DEV and PREPROD share
+// the same instance (one container, one database per environment - see
+// 'Ensure Database'). PROD always gets its own dedicated container, isolated
+// from DEV/PREPROD, since a shared PROD database is not an acceptable risk.
+// =============================================================================
+String dbContainerFor(String projectName, String environment) {
+    return environment == 'prod' ? "${projectName}-db-prod" : "${projectName}-db-shared"
 }
 
 // =============================================================================
@@ -1096,6 +1138,62 @@ void deployApiContainer(Map args) {
             harborProject   : args.harborProject,
             traefikNetwork  : args.traefikNetwork,
             extraEnv        : apiEnv + secretEnv
+        )
+    }
+
+    if (credBindings) {
+        withCredentials(credBindings) { doDeploy() }
+    } else {
+        doDeploy()
+    }
+}
+
+// =============================================================================
+// Helper: Same wiring as deployApiContainer (DATABASE_URL, REDIS_HOST/PORT,
+// JWT secrets) but deploys through deployBlueGreen instead of deployContainer -
+// used for PROD, where the API gets the same zero-downtime guarantee as the
+// frontend rather than a stop/start replace.
+// =============================================================================
+void deployApiBlueGreen(Map args) {
+    List apiSecretEnv = args.apiSecretEnv ?: []
+    Map<String, String> apiEnv = args.apiEnv ?: [:]
+    String dbCredentialsId = args.dbCredentialsId
+    String postgresContainer = args.postgresContainer
+    String redisContainer = args.redisContainer
+    String dbName = args.dbName
+
+    List credBindings = apiSecretEnv.collect { e -> string(credentialsId: e.credentialId, variable: e.envVar) }
+    if (dbCredentialsId) {
+        credBindings += usernamePassword(
+            credentialsId   : dbCredentialsId,
+            usernameVariable: 'DB_USER',
+            passwordVariable: 'DB_PASSWORD'
+        )
+    }
+
+    Closure doDeploy = {
+        Map<String, String> secretEnv = [:]
+        apiSecretEnv.each { e -> secretEnv[e.envVar] = env."${e.envVar}" }
+        if (dbCredentialsId) {
+            secretEnv['DATABASE_URL'] =
+                "postgresql://${urlEncode(env.DB_USER)}:${urlEncode(env.DB_PASSWORD)}@${postgresContainer}:5432/${dbName}?schema=public"
+        }
+        if (redisContainer) {
+            secretEnv['REDIS_HOST'] = redisContainer
+            secretEnv['REDIS_PORT'] = '6379'
+        }
+        deployBlueGreen(
+            projectName    : "${args.projectName}-api",
+            environment    : args.environment,
+            imageTag       : args.imageTag,
+            domain         : args.apiDomain,
+            port           : args.apiPort,
+            healthPath     : args.apiHealthPath,
+            registry       : args.registry,
+            harborProject  : args.harborProject,
+            traefikNetwork : args.traefikNetwork,
+            monitorMinutes : args.monitorMinutes,
+            extraEnv       : apiEnv + secretEnv
         )
     }
 
