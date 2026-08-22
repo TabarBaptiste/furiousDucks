@@ -64,7 +64,8 @@ ciPipeline(
     k6Duration    : '5m',
 
     // Backend API (NestJS), deployed alongside the frontend.
-    // Wired for DEV and PREPROD - PROD follows once validated.
+    // Wired for DEV, PREPROD and PROD (PROD uses its own dedicated database
+    // and JWT secrets, and deploys Blue/Green like the frontend).
     apiDockerfile  : 'api/Dockerfile',
     apiPort        : 3001,
     apiHealthPath  : '/api/v1/health',
@@ -73,6 +74,9 @@ ciPipeline(
     // API domains (one per environment)
     devApiDomain    : "${projectName}-api-dev.wk-archi-o24a-4-5-g1.fr",
     preprodApiDomain: "${projectName}-api-preprod.wk-archi-o24a-4-5-g1.fr",
+    // PROD API stays on the wk zone: dsp5 only hosts the frontend and has no
+    // wildcard certificate, while wk has one.
+    prodApiDomain   : "${projectName}-api.wk-archi-o24a-4-5-g1.fr",
 
     // Environment-independent API variables only. FRONTEND_URL and CORS_ORIGINS
     // are derived by the shared library from the target environment's frontend
@@ -83,7 +87,7 @@ ciPipeline(
     apiSecretEnv   : [
         [envVar: 'JWT_SECRET', credentialId: 'thetiptop-jwt-secret'],
         [envVar: 'JWT_REFRESH_SECRET', credentialId: 'thetiptop-jwt-refresh-secret']
-    ]
+    ],
 
     // The CST (2.9) requires a distinct credential set per environment. The pilot
     // project deliberately runs DEV and PREPROD on the single shared set above:
@@ -100,4 +104,17 @@ ciPipeline(
     //         [envVar: 'JWT_REFRESH_SECRET', credentialId: 'thetiptop-jwt-refresh-secret-preprod']
     //     ]
     // ]
+
+    // PROD always uses its own dedicated credentials - never falls back to the
+    // shared DEV/PREPROD set above, to keep a compromised DEV/PREPROD secret
+    // from ever granting access to the PROD database or signing PROD JWTs.
+    dbCredentialsByEnv: [
+        prod: 'thetiptop-db-credentials-prod'
+    ],
+    apiSecretEnvByEnv : [
+        prod: [
+            [envVar: 'JWT_SECRET', credentialId: 'thetiptop-jwt-secret-prod'],
+            [envVar: 'JWT_REFRESH_SECRET', credentialId: 'thetiptop-jwt-refresh-secret-prod']
+        ]
+    ]
 )

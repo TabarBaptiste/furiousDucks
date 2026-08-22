@@ -51,6 +51,11 @@ def call(Map config) {
     def healthPath     = config.healthPath     ?: '/health'
     def healthTimeout  = config.healthTimeout  ?: 60   // seconds
     def healthInterval = config.healthInterval ?: 2    // seconds
+    // Additional runtime env vars (e.g. DATABASE_URL, JWT secrets for an API
+    // deployment) - built into "-e KEY=VAL" flags below, same convention as
+    // deployContainer()'s extraEnv.
+    Map<String, String> extraEnv = config.extraEnv ?: [:]
+    String extraEnvFlags = extraEnv.collect { k, v -> "-e ${k}=\"${v}\"" }.join(' ')
 
     def fullImage      = "${registry}/${harborProject}/${projectName}:${imageTag}"
     def blueContainer  = "${projectName}-${environment}-blue"
@@ -100,6 +105,7 @@ def call(Map config) {
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
                 -e DEPLOYMENT_COLOR=green \
+                ${extraEnvFlags} \
                 ${fullImage}
         """
 
@@ -173,6 +179,7 @@ def call(Map config) {
                 -e APP_ENV=${environment} \
                 -e APP_VERSION=${imageTag} \
                 -e DEPLOYMENT_COLOR=green \
+                ${extraEnvFlags} \
                 ${fullImage}
         """
 
