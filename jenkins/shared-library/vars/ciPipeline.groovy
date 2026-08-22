@@ -593,7 +593,7 @@ void call(Map config = [:]) {
                 }
                 post {
                     always {
-                        archiveArtifacts(artifacts: 'k6-results.json, k6-summary.json', allowEmptyArchive: true)
+                        archiveArtifacts(artifacts: 'k6-results.json, k6-summary.json', allowEmptyArchive: false)
                     }
                 }
             }
@@ -1764,6 +1764,7 @@ void runK6Performance(Map config) {
 
     sh """
         docker run --rm \
+            --user 0:0 \
             -v "${hostWorkspace}:/scripts" \
             --network ${traefikNetwork} \
             -e BASE_URL=https://${preprodDomain} \
@@ -1776,6 +1777,28 @@ void runK6Performance(Map config) {
             --summary-export=/scripts/k6-summary.json \
             /scripts/${k6Script}
     """
+
+    // grafana/k6 exits 0 even when every VU failed to reach the target (DNS
+    // failure, network unreachable, etc.) as long as the configured
+    // thresholds evaluate true on zero samples - which they do, since
+    // "p(95)<2000" on an empty set is vacuously true. That let a build pass
+    // "K6 Performance" while never actually sending a single request. Count
+    // recorded samples in the raw JSON output and fail loudly if there are
+    // none, instead of relying on k6's exit code alone.
+    if (!fileExists('k6-results.json')) {
+        error('K6 did not produce k6-results.json - the run failed before recording any samples.')
+    }
+
+    int sampleCount = sh(
+        script: 'grep -c \'"type":"Point"\' k6-results.json || true',
+        returnStdout: true
+    ).trim() as Integer
+
+    if (sampleCount == 0) {
+        error("K6 completed without error but recorded zero samples (0 requests reached " +
+            "${preprodDomain}). The load test did not actually run - check network " +
+            'connectivity from the Jenkins agent or errors in the script output above.')
+    }
 }
 
 void cleanupWorkspace(String hostWorkspace) {
