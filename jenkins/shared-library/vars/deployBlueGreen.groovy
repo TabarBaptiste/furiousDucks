@@ -97,6 +97,7 @@ def call(Map config) {
         sh "docker rm   ${greenContainer} 2>/dev/null || true"
 
         sh """
+            set +x
             docker run -d \
                 --name ${greenContainer} \
                 --restart unless-stopped \
@@ -107,6 +108,7 @@ def call(Map config) {
                 -e DEPLOYMENT_COLOR=green \
                 ${extraEnvFlags} \
                 ${fullImage}
+            set -x
         """
 
         echo "GREEN container started: ${greenContainer}"
@@ -163,6 +165,7 @@ def call(Map config) {
             docker stop ${greenContainer}
             docker rm   ${greenContainer}
 
+            set +x
             docker run -d \
                 --name ${greenContainer} \
                 --restart unless-stopped \
@@ -181,6 +184,7 @@ def call(Map config) {
                 -e DEPLOYMENT_COLOR=green \
                 ${extraEnvFlags} \
                 ${fullImage}
+            set -x
         """
 
         // Re-check health on the labelled container: it is the one now taking
@@ -401,6 +405,7 @@ def rollback(Map config) {
         docker pull ${fullImage}
         docker logout ${registry}
 
+        set +x
         docker run -d \
             --name ${blueContainer} \
             --restart unless-stopped \
@@ -417,6 +422,7 @@ def rollback(Map config) {
             -e DEPLOYMENT_COLOR=blue \
             ${extraEnvFlags} \
             ${fullImage}
+        set -x
 
         echo "Rollback complete - running ${previousTag}"
     """
