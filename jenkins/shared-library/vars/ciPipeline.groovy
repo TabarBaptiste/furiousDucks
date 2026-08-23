@@ -125,6 +125,15 @@ void call(Map config = [:]) {
     Map dbCredentialsByEnv = config.dbCredentialsByEnv ?: [:]
     Map apiSecretEnvByEnv  = config.apiSecretEnvByEnv  ?: [:]
 
+    // Extra --build-arg pairs for the webapp image, same override pattern as
+    // dbCredentialsByEnv/apiSecretEnvByEnv above: common values apply to every
+    // environment, webappBuildArgsByEnv[env] is merged on top and wins on
+    // conflict. Lets a Jenkinsfile ship e.g. an analytics ID only in PROD
+    // without touching this library.
+    //   webappBuildArgsByEnv: [prod: [NEXT_PUBLIC_GA_ID: 'G-XXXX']]
+    Map webappBuildArgs      = config.webappBuildArgs      ?: [:]
+    Map webappBuildArgsByEnv = config.webappBuildArgsByEnv ?: [:]
+
     // Front-end domain per environment, so the API's FRONTEND_URL/CORS_ORIGINS and
     // the webapp's NEXT_PUBLIC_API_URL can be derived from the target environment
     // instead of being hard-coded to DEV by the calling Jenkinsfile.
@@ -279,17 +288,28 @@ void call(Map config = [:]) {
                         // It must point at the API domain of the environment this image
                         // is being built for, otherwise the PREPROD bundle ships either
                         // no API URL at all or the DEV one.
-                        Map<String, String> webappBuildArgs = [:]
+                        Map<String, String> resolvedBuildArgs = [:]
                         String targetApiDomain = apiDomains[env.DEPLOY_ENV]
                         if (hasApi && targetApiDomain) {
-                            webappBuildArgs['NEXT_PUBLIC_API_URL'] = "https://${targetApiDomain}/api/v1"
+                            resolvedBuildArgs['NEXT_PUBLIC_API_URL'] = "https://${targetApiDomain}/api/v1"
                         }
+                        // Same rationale as NEXT_PUBLIC_API_URL above: baked into the
+                        // client bundle at build time, so it must match the domain of
+                        // the environment being built, not just DEV.
+                        String targetFrontDomain = frontDomains[env.DEPLOY_ENV]
+                        if (targetFrontDomain) {
+                            resolvedBuildArgs['NEXT_PUBLIC_SITE_URL'] = "https://${targetFrontDomain}"
+                        }
+                        // Project-supplied build args: common values first, then the
+                        // per-environment override on top (see webappBuildArgsByEnv).
+                        resolvedBuildArgs.putAll(webappBuildArgs)
+                        resolvedBuildArgs.putAll(webappBuildArgsByEnv[env.DEPLOY_ENV] ?: [:])
                         echo "Building ${env.DOCKER_IMAGE}:${env.IMAGE_TAG}"
                         buildDockerImage(
                             dockerImage   : env.DOCKER_IMAGE,
                             imageTag      : env.IMAGE_TAG,
                             dockerfilePath: dockerfilePath,
-                            buildArgs     : webappBuildArgs
+                            buildArgs     : resolvedBuildArgs
                         )
                     }
                 }
