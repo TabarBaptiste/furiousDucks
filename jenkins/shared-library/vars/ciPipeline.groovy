@@ -569,7 +569,7 @@ void call(Map config = [:]) {
                 }
                 post {
                     always {
-                        publishE2EReports()
+                        publishE2EReports(e2eFramework)
                     }
                 }
             }
@@ -1367,6 +1367,29 @@ void notifyBuild(String status, String projectName, String deployEnv = '', Strin
         }
     }
 
+    // PROD deployments go to Mattermost regardless of the stakeholder email
+    // above (which only fires when notifyRecipients declares an address for
+    // this environment) - going live is operationally significant enough
+    // that the team should see it land, not just the client/PO.
+    if (status == 'SUCCESS' && deployEnv == 'prod') {
+        try {
+            mattermostSend(color: '#36A64F', message: summary)
+        } catch (Exception e) {
+            echo "Mattermost notification failed: ${e.message}"
+        }
+    }
+
+    // UNSTABLE is how the security gates (Semgrep, ZAP, quality gate) report
+    // findings, so it needs the same channel as FAILURE - otherwise a build
+    // degraded by security findings is only visible to whoever opens the log.
+    if (status == 'UNSTABLE') {
+        try {
+            mattermostSend(color: '#FFA500', message: summary)
+        } catch (Exception e) {
+            echo "Mattermost notification failed: ${e.message}"
+        }
+    }
+
     if (status == 'FAILURE') {
         try {
             mattermostSend(color: '#FF0000', message: summary)
@@ -1643,6 +1666,7 @@ void runSemgrep(String hostWorkspace) {
                 returntocorp/semgrep:latest \
                 semgrep scan \
                 --config=auto \
+                --error \
                 --json \
                 --output=/src/semgrep-report.json \
                 /src
@@ -1731,11 +1755,20 @@ void runE2ETests(String framework, String hostWorkspace, String traefikNetwork, 
     """
 }
 
-void publishE2EReports() {
+void publishE2EReports(String framework) {
     junit(
         testResults: '**/e2e-junit.xml, **/results.xml, **/test-results/**/*.xml',
         allowEmptyResults: true
     )
+
+    // Only Playwright produces an HTML report here - runE2ETests drives Cypress
+    // with the JUnit reporter only, so there is no cypress HTML directory to
+    // publish and pointing publishHTML at "playwright-report" would silently
+    // (allowMissing) publish an empty report.
+    if (framework != 'playwright') {
+        return
+    }
+
     publishHTML(target: [
         allowMissing         : true,
         alwaysLinkToLastBuild: true,
