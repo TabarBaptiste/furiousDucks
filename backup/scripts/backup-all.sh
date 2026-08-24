@@ -146,7 +146,7 @@ dump_postgres() {
   else
     log "ERROR" "  -> Failed to dump ${name} from ${host}"
     rm -f "${out}"
-    (( FAILED++ ))
+    FAILED=$(( FAILED + 1 ))
   fi
 }
 
@@ -176,10 +176,10 @@ for volume in "${!BACKUP_TARGETS[@]}"; do
     vol_end="$(date +%s)"
     vol_duration=$(( vol_end - vol_start ))
     log "INFO" "  -> Volume '${volume}' backed up successfully (${vol_duration}s)"
-    (( SUCCEEDED++ ))
+    SUCCEEDED=$(( SUCCEEDED + 1 ))
   else
     log "ERROR" "  -> Failed to back up volume '${volume}'"
-    (( FAILED++ ))
+    FAILED=$(( FAILED + 1 ))
   fi
 done
 
@@ -215,6 +215,9 @@ PROM
     echo "${now}" > "${TEXTFILE_DIR}/backup_last_success_ts"
   fi
 
+  # mktemp creates the file 0600 root; node-exporter runs as nobody and must
+  # be able to read it, otherwise the metric never reaches Prometheus.
+  chmod 0644 "${tmp}"
   mv "${tmp}" "${TEXTFILE_DIR}/backup.prom"
   log "INFO" "Prometheus metrics written to ${TEXTFILE_DIR}/backup.prom (status=${status})"
 }

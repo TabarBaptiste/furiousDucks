@@ -1,6 +1,7 @@
 FROM restic/restic:0.17.0
 
-RUN apk add --no-cache bash curl postgresql16-client
+# coreutils provides GNU date (busybox date cannot parse restic RFC3339 timestamps)
+RUN apk add --no-cache bash curl coreutils postgresql16-client
 
 COPY scripts/ /scripts/
 RUN chmod +x /scripts/*.sh

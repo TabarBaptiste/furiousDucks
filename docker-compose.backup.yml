@@ -16,7 +16,7 @@
 #   - External volumes (gitlab-*, jenkins-*, prometheus-*, grafana-*,
 #     sonarqube-*, mattermost-*) must be created by the main CI compose stack.
 #   - If Harbor is deployed on this host (see docs/04-harbor.md), its data
-#     directory (data_volume in harbor.yml, default /data/harbor) must exist
+#     directory (data_volume in harbor.yml, default /data) must exist
 #     at the path bind-mounted below. If Harbor is not deployed yet,
 #     backup-harbor.sh detects the missing path and skips without failing.
 #   - A .env file must define:
@@ -83,9 +83,15 @@ services:
   backup-manager:
     build: ./backup
     container_name: common-backup-manager-ci
+    # Fixed hostname: restic tags each snapshot with it. Without this the
+    # container ID is used, which changes on every recreation and splits the
+    # retention groups (see retention.sh --group-by).
+    hostname: backup-manager
     environment:
       RESTIC_REPOSITORY: s3:http://common-minio-ci:9000/furious-ducks-backups
       RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      # Mattermost incoming webhook used by the scripts' notify_failure()
+      WEBHOOK_URL: ${MATTERMOST_WEBHOOK_URL}
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       # DB credentials for consistent logical dumps (pg_dump over ci_network)
@@ -110,14 +116,21 @@ services:
       - mattermost-config:/backup-sources/mattermost-config:ro
       # --- Harbor registry (bind mount, not a Docker volume - Harbor is
       #     deployed separately via its own installer, see docs/04-harbor.md).
-      #     Host path must match data_volume in harbor.yml (default /data/harbor). ---
-      - /data/harbor:/backup-sources/harbor-registry:ro
+      #     Host path must match data_volume in harbor.yml, whose default is
+      #     /data (holding registry/, database/, secret/). NOTE: database/ is a
+      #     live PostgreSQL data directory, so this is a cold copy; for a fully
+      #     consistent Harbor restore, stop Harbor before backing up. ---
+      - /data:/backup-sources/harbor-registry:ro
       # --- Writable target for logical DB dumps (backed up by restic) ---
       - backup-dumps:/backup-sources/db-dumps
       # --- Backup scripts ---
       - ./backup/scripts:/scripts:ro
       # --- Prometheus textfile metrics (shared with node-exporter) ---
       - /opt/furious-ducks/infrastructure/node-exporter/textfiles:/textfiles
+      # --- Backup job logs (named volume: the container filesystem is wiped
+      #     on every recreation, and the CST requires backup access to be
+      #     logged and auditable over time) ---
+      - backup-logs:/var/log/backup
     networks:
       # ci_network is required to reach the database containers for pg_dump
       - ci_network
@@ -194,6 +207,10 @@ volumes:
 
   # Writable staging area for logical DB dumps (managed by this stack)
   backup-dumps:
+    driver: local
+
+  # Persistent backup job logs (managed by this stack)
+  backup-logs:
     driver: local
 
   # External volumes created and managed by the main CI/CD and monitoring stacks

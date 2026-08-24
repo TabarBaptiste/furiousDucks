@@ -87,13 +87,17 @@ export RESTIC_PASSWORD
 log "INFO" "========== Retention Cleanup Started =========="
 log "INFO" "Policy: keep-daily=${KEEP_DAILY}, keep-weekly=${KEEP_WEEKLY}, keep-monthly=${KEEP_MONTHLY}, keep-yearly=${KEEP_YEARLY}"
 
-SNAPSHOTS_BEFORE="$(restic snapshots --json 2>/dev/null | grep -c '"short_id"' || echo 0)"
+SNAPSHOTS_BEFORE="$(restic snapshots --json 2>/dev/null | grep -o '"short_id"' | wc -l)"
 log "INFO" "Snapshots before cleanup: ${SNAPSHOTS_BEFORE}"
 
 # ---------------------------------------------------------------------------
 # Apply retention policy
 # ---------------------------------------------------------------------------
 FORGET_FLAGS=(
+  # Group by paths only: the container hostname is the Docker container ID and
+  # changes on every recreation. The default host+paths grouping would give
+  # each incarnation its own 7/4/6/2 quota, so old groups would never expire.
+  --group-by paths
   --keep-daily "${KEEP_DAILY}"
   --keep-weekly "${KEEP_WEEKLY}"
   --keep-monthly "${KEEP_MONTHLY}"
@@ -122,7 +126,7 @@ fi
 # ---------------------------------------------------------------------------
 # Count snapshots after cleanup
 # ---------------------------------------------------------------------------
-SNAPSHOTS_AFTER="$(restic snapshots --json 2>/dev/null | grep -c '"short_id"' || echo 0)"
+SNAPSHOTS_AFTER="$(restic snapshots --json 2>/dev/null | grep -o '"short_id"' | wc -l)"
 CLEANED=$(( SNAPSHOTS_BEFORE - SNAPSHOTS_AFTER ))
 
 if [[ ${CLEANED} -lt 0 ]]; then

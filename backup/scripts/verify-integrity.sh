@@ -102,14 +102,17 @@ echo "${SNAPSHOTS_OUTPUT}" | tee -a "${LOG_FILE}"
 # ---------------------------------------------------------------------------
 log "INFO" "Checking for snapshots within the last ${MAX_AGE_HOURS} hours..."
 
-# Get the latest snapshot timestamp in JSON format
-LATEST_SNAPSHOT_JSON="$(restic snapshots --latest 1 --json 2>/dev/null)" || {
+# Query every snapshot: `--latest 1` returns one snapshot *per group*
+# (host+paths), so the newest overall is the max of those timestamps, not the
+# first one printed.
+LATEST_SNAPSHOT_JSON="$(restic snapshots --json 2>/dev/null)" || {
   log "ERROR" "Failed to query latest snapshot"
   exit 1
 }
 
-# Check if any snapshots exist at all
-SNAPSHOT_COUNT="$(echo "${LATEST_SNAPSHOT_JSON}" | grep -c '"time"' || true)"
+# Check if any snapshots exist at all (the JSON is a single line, so count
+# occurrences rather than matching lines)
+SNAPSHOT_COUNT="$(echo "${LATEST_SNAPSHOT_JSON}" | grep -o '"time"' | wc -l)"
 
 if [[ "${SNAPSHOT_COUNT}" -eq 0 ]]; then
   log "ERROR" "No snapshots found in the repository"
@@ -117,8 +120,8 @@ if [[ "${SNAPSHOT_COUNT}" -eq 0 ]]; then
   exit 1
 fi
 
-# Extract the latest snapshot time and compare
-LATEST_TIME="$(echo "${LATEST_SNAPSHOT_JSON}" | grep -o '"time":"[^"]*"' | head -1 | cut -d'"' -f4)"
+# Extract the most recent snapshot time (RFC3339 sorts lexicographically)
+LATEST_TIME="$(echo "${LATEST_SNAPSHOT_JSON}" | grep -o '"time":"[^"]*"' | cut -d'"' -f4 | sort | tail -1)"
 
 if [[ -z "${LATEST_TIME}" ]]; then
   log "ERROR" "Could not parse latest snapshot time"
@@ -130,8 +133,9 @@ LATEST_EPOCH="$(date -d "${LATEST_TIME}" +%s 2>/dev/null)" || {
   # Try alternate format (strip fractional seconds and timezone detail)
   CLEANED_TIME="$(echo "${LATEST_TIME}" | sed 's/\.[0-9]*//; s/+.*/Z/')"
   LATEST_EPOCH="$(date -d "${CLEANED_TIME}" +%s 2>/dev/null)" || {
-    log "WARN" "Could not parse snapshot timestamp '${LATEST_TIME}', skipping age check"
-    LATEST_EPOCH=0
+    log "ERROR" "Could not parse snapshot timestamp '${LATEST_TIME}'"
+    notify_failure "Freshness check could not parse snapshot timestamp '${LATEST_TIME}'."
+    exit 1
   }
 }
 
@@ -140,15 +144,13 @@ AGE_SECONDS=$(( NOW_EPOCH - LATEST_EPOCH ))
 AGE_HOURS=$(( AGE_SECONDS / 3600 ))
 MAX_AGE_SECONDS=$(( MAX_AGE_HOURS * 3600 ))
 
-if [[ ${LATEST_EPOCH} -gt 0 ]] && [[ ${AGE_SECONDS} -gt ${MAX_AGE_SECONDS} ]]; then
+if [[ ${AGE_SECONDS} -gt ${MAX_AGE_SECONDS} ]]; then
   log "ERROR" "Latest snapshot is ${AGE_HOURS} hours old (threshold: ${MAX_AGE_HOURS}h)"
   notify_failure "Latest backup snapshot is ${AGE_HOURS} hours old, exceeding the ${MAX_AGE_HOURS}-hour threshold."
   exit 1
 fi
 
-if [[ ${LATEST_EPOCH} -gt 0 ]]; then
-  log "INFO" "Latest snapshot age: ${AGE_HOURS} hours (within ${MAX_AGE_HOURS}h threshold)"
-fi
+log "INFO" "Latest snapshot age: ${AGE_HOURS} hours (within ${MAX_AGE_HOURS}h threshold)"
 
 # ---------------------------------------------------------------------------
 # Summary
