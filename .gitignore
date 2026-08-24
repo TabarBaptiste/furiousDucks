@@ -6,3 +6,4 @@ alertmanager/secrets/*
 !alertmanager/secrets/*.example
 prometheus/secrets/*
 !prometheus/secrets/*.example
+node-exporter
