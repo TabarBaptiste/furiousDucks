@@ -162,11 +162,15 @@ void call(Map config = [:]) {
 
         stages {
             // =================================================================
-            // STAGE: Checkout
+            // STAGE: Prepare
+            // Jenkins has already checked the repository out in its implicit
+            // "Declarative: Checkout SCM" stage, so this one no longer calls
+            // checkout scm - that second fetch was pure duplication. What is
+            // left is the stage's real job: deriving the build metadata every
+            // later stage reads (image tag, host workspace, target env).
             // =================================================================
-            stage('Checkout') {
+            stage('Prepare') {
                 steps {
-                    checkout scm
                     script {
                         env.GIT_COMMIT_SHORT = sh(
                             script: 'git rev-parse --short HEAD',
@@ -258,27 +262,47 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Build Assets (front-end stacks only)
+            // STAGE: Gitleaks (Secret Detection)
+            // Runs BEFORE any image is built or pushed. It used to sit after
+            // Docker Push, which meant a leaked secret was only reported once
+            // the image containing it was already published to Harbor.
             // =================================================================
-            stage('Build Assets') {
+            stage('Gitleaks') {
                 when {
-                    expression { return stack == 'node' }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
                 }
                 steps {
-                    runBuildAssets(env.HOST_WORKSPACE)
+                    runGitleaks(env.HOST_WORKSPACE)
+                }
+            }
+
+            // =================================================================
+            // STAGE: Semgrep SAST (Static Application Security Testing)
+            // Same rationale as Gitleaks: this used to run after Deploy DEV,
+            // so the static analysis never had a chance to stop anything.
+            // Scoped to the environments that serve real users (PREPROD/PROD);
+            // DEV pushes are frequent and already covered by Sonar.
+            // =================================================================
+            stage('Semgrep SAST') {
+                when {
+                    expression { return env.DEPLOY_ENV in ['preprod', 'prod'] }
+                }
+                steps {
+                    runSemgrep(env.HOST_WORKSPACE)
                 }
             }
 
             // =================================================================
             // STAGE: Docker Build
+            // The "Build Assets" stage that used to sit here was removed: it
+            // ran `npm run build` at the workspace root, but the Dockerfile is
+            // multi-stage and rebuilds from source anyway, so its output was
+            // never consumed. It also filled the workspace, inflating the
+            // Docker build context to ~1 GB and invalidating the COPY layer.
             // =================================================================
             stage('Docker Build') {
                 when {
-                    anyOf {
-                        branch 'main'
-                        branch 'develop'
-                        expression { return env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/ }
-                    }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
                 }
                 steps {
                     script {
@@ -340,11 +364,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Trivy Scan') {
                 when {
-                    anyOf {
-                        branch 'main'
-                        branch 'develop'
-                        expression { return env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/ }
-                    }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
                 }
                 steps {
                     trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG, env.HOST_WORKSPACE)
@@ -368,11 +388,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Docker Push') {
                 when {
-                    anyOf {
-                        branch 'main'
-                        branch 'develop'
-                        expression { return env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/ }
-                    }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
                 }
                 steps {
                     pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
@@ -388,18 +404,6 @@ void call(Map config = [:]) {
                 }
                 steps {
                     pushDockerImage(registry, "${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
-                }
-            }
-
-            // =================================================================
-            // STAGE: Gitleaks (Secret Detection)
-            // =================================================================
-            stage('Gitleaks') {
-                when {
-                    anyOf { branch 'main'; branch 'develop' }
-                }
-                steps {
-                    runGitleaks(env.HOST_WORKSPACE)
                 }
             }
 
@@ -507,18 +511,6 @@ void call(Map config = [:]) {
                         harborProject : harborProject,
                         traefikNetwork: traefikNetwork
                     )
-                }
-            }
-
-            // =================================================================
-            // STAGE: Semgrep SAST (Static Application Security Testing)
-            // =================================================================
-            stage('Semgrep SAST') {
-                when {
-                    branch 'main'
-                }
-                steps {
-                    runSemgrep(env.HOST_WORKSPACE)
                 }
             }
 
@@ -1610,16 +1602,6 @@ void waitForQualityGateResult() {
         echo 'Quality Gate timeout - continuing pipeline (quality gate is non-blocking)'
         currentBuild.result = 'UNSTABLE'
     }
-}
-
-void runBuildAssets(String hostWorkspace) {
-    sh """
-        docker run --rm \
-            -v "${hostWorkspace}:/work" \
-            -w /work \
-            node:22-bullseye \
-            bash -lc 'npm run build'
-    """
 }
 
 void pushDockerImage(String registry, String dockerImage, String imageTag, boolean pushLatest = false) {
