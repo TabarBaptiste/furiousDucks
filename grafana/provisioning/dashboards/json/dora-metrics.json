@@ -1,0 +1,214 @@
+{
+  "uid": "dora-metrics",
+  "title": "Furious Ducks - Metriques DORA",
+  "tags": ["dora", "cicd"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1h",
+  "time": {
+    "from": "now-90d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Frequence de deploiement",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.14 },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "dora_deployment_frequency_per_day{project=\"thetiptop\"}",
+          "legendFormat": "deploiements / jour",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      },
+      "description": "Deploiements PROD par jour, moyenne glissante sur la fenetre d'observation (dora_metrics_window_days)."
+    },
+    {
+      "id": 2,
+      "title": "Lead time for changes",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 604800 },
+              { "color": "red", "value": 2592000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "dora_lead_time_for_changes_seconds{project=\"thetiptop\"}",
+          "legendFormat": "lead time",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      },
+      "description": "Temps moyen entre un commit et son deploiement en PROD."
+    },
+    {
+      "id": 3,
+      "title": "Taux d'echec de changement",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.15 },
+              { "color": "red", "value": 0.45 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "dora_change_failure_rate{project=\"thetiptop\"}",
+          "legendFormat": "taux d'echec",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      },
+      "description": "Fraction des deploiements PROD suivis d'un hotfix/* dans la fenetre d'observation."
+    },
+    {
+      "id": 4,
+      "title": "MTTR (temps de correction)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 3600 },
+              { "color": "red", "value": 86400 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "dora_mean_time_to_restore_seconds{project=\"thetiptop\"}",
+          "legendFormat": "MTTR",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      },
+      "description": "Temps moyen entre l'ouverture et la fusion d'une MR hotfix/* vers main."
+    },
+    {
+      "id": 5,
+      "title": "Deploiements et hotfix, sur la duree",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "dora_deployment_count_total{project=\"thetiptop\"}",
+          "legendFormat": "deploiements (fenetre)",
+          "refId": "A"
+        },
+        {
+          "expr": "dora_hotfix_count_total{project=\"thetiptop\"}",
+          "legendFormat": "hotfix (fenetre)",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last"] }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Derniere execution du calcul",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "dora_metrics_last_run_timestamp_seconds{project=\"thetiptop\"} * 1000",
+          "legendFormat": "dernier calcul",
+          "refId": "A"
+        },
+        {
+          "expr": "dora_metrics_last_run_status{project=\"thetiptop\"}",
+          "legendFormat": "statut (0=ok, 1=echec)",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      },
+      "description": "Le job Ofelia tourne chaque jour a 06:00. dora_metrics_last_run_status doit rester a 0."
+    }
+  ]
+}

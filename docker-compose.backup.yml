@@ -175,6 +175,10 @@ services:
       - "ofelia.job-exec.retention-monthly.schedule=0 0 4 1 * *"
       - "ofelia.job-exec.retention-monthly.container=common-backup-manager-ci"
       - "ofelia.job-exec.retention-monthly.command=/scripts/retention.sh"
+      # --- Daily DORA metrics refresh at 06:00 (after the 02:00 backup) ---
+      - "ofelia.job-exec.dora-metrics-daily.schedule=0 0 6 * * *"
+      - "ofelia.job-exec.dora-metrics-daily.container=common-dora-metrics-ci"
+      - "ofelia.job-exec.dora-metrics-daily.command=/scripts/dora_metrics.py"
     networks:
       - backup_network
     depends_on:

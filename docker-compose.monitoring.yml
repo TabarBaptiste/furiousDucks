@@ -186,6 +186,29 @@ services:
       - "traefik.enable=false"
 
   # ---------------------------------------------------------------------------
+  # DORA Metrics - Deployment Frequency, Lead Time, Change Failure Rate, MTTR
+  # Internal only. Ofelia (docker-compose.backup.yml) triggers the script on a
+  # schedule; results are written to the node-exporter textfile directory,
+  # same mechanism as the backup metrics.
+  # ---------------------------------------------------------------------------
+  dora-metrics:
+    build: ./dora
+    container_name: common-dora-metrics-ci
+    restart: unless-stopped
+    environment:
+      GITLAB_URL: http://common-gitlab-ci
+      GITLAB_TOKEN: ${GITLAB_ROOT_PAT}
+      GITLAB_PROJECT_ID: "1"
+      WINDOW_DAYS: "30"
+      TEXTFILE_DIR: /textfiles
+    volumes:
+      - /opt/furious-ducks/infrastructure/node-exporter/textfiles:/textfiles
+    networks:
+      - ci_network
+    labels:
+      - "traefik.enable=false"
+
+  # ---------------------------------------------------------------------------
   # Node Exporter - Host-Level Metrics
   # Internal only - scraped by Prometheus for OS/hardware metrics
   # ---------------------------------------------------------------------------
