@@ -1,0 +1,44 @@
+// =============================================================================
+// Template Jenkinsfile.k6 - Furious Ducks CI/CD
+//
+// Load testing runs as its OWN Jenkins job, separate from the build pipeline:
+// it targets an already-deployed environment and has no dependency on the
+// build that produced it. Running it on every push cost ~3 minutes per build
+// for a result nobody compared to anything - a load test is only meaningful
+// as a trend.
+//
+// Setup:
+//   1. Copy this file to the root of your project repository as
+//      `Jenkinsfile.k6`, next to the existing `Jenkinsfile`.
+//   2. In Jenkins, create a *Pipeline* job (not multibranch) pointing at your
+//      project repository, branch `main`, script path `Jenkinsfile.k6`.
+//   3. Run it once manually so Jenkins registers the cron trigger and the
+//      build parameters declared by the shared library.
+//
+// The job can then be triggered either by its schedule or manually with
+// "Build with Parameters" to override the load profile for a one-off run.
+// =============================================================================
+/* groovylint-disable CompileStatic, NoDef, UnusedVariable, VariableName, VariableTypeRequired */
+
+@Library('furious-ducks-shared-library') _
+
+def projectName = 'my-project'
+
+k6Pipeline(
+    projectName: projectName,
+
+    // Environment under test. PREPROD is the default target: it is iso-prod
+    // and loading PROD would degrade the delivered client site.
+    targetUrl  : "https://${projectName}-preprod.wk-archi-o24a-4-5-g1.fr",
+
+    // Path to the k6 script inside the project repository
+    k6Script   : 'tests/performance/load-test.js',
+
+    // Default load profile - overridable per run via build parameters
+    k6Vus      : 50,
+    k6Duration : '3m',
+
+    // Jenkins cron syntax. 'H' spreads the start time across the hour so
+    // several projects scheduled the same day don't all fire at once.
+    cron       : 'H 2 * * 1'   // every Monday around 02:00
+)

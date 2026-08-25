@@ -1,0 +1,31 @@
+// =============================================================================
+// Jenkinsfile.k6 - The Tip Top (Furious Ducks CI/CD)
+//
+// Standalone load-test job, decoupled from the build pipeline. Replaces the
+// "K6 Performance" stage that used to run on every push to main (3 min 02 s
+// per build, measured on build #30).
+//
+// Jenkins job: Pipeline, repo thetiptop_v0, branch main, script path
+// `Jenkinsfile.k6`. Triggered weekly by cron, or manually with parameters.
+// =============================================================================
+
+@Library('furious-ducks-shared-library') _
+
+def projectName = 'thetiptop'
+
+k6Pipeline(
+    projectName: projectName,
+
+    // PREPROD, not PROD: PREPROD is iso-prod, and loading the delivered client
+    // site would degrade it for real users.
+    targetUrl  : "https://${projectName}-preprod.wk-archi-o24a-4-5-g1.fr",
+
+    k6Script   : 'tests/performance/load-test.js',
+
+    // Same profile the in-pipeline stage used, so the first scheduled runs are
+    // directly comparable with the historical builds.
+    k6Vus      : 50,
+    k6Duration : '3m',
+
+    cron       : 'H 2 * * 1'   // every Monday around 02:00
+)

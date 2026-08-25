@@ -12,13 +12,13 @@
 //       deployPreprod: true,
 //       deployProd  : true,
 //       runE2E      : true,
-//       runK6       : true,
 //       devDomain   : 'my-app-dev.wk-archi-o24a-4-5-g1.fr',
 //       preprodDomain: 'my-app-preprod.wk-archi-o24a-4-5-g1.fr',
 //       prodDomain  : 'my-app.dsp5-archi-o24a-4-5-g1.fr',
 //       appPort     : 3000,
-//       k6Vus       : 50,
-//       k6Duration  : '3m',
+//
+//       // Load testing is NOT part of this pipeline: it runs as its own
+//       // scheduled job, see vars/k6Pipeline.groovy.
 //
 //       // Optional: separate backend API, deployed alongside the frontend.
 //       // Wired for DEV and PREPROD - PROD follows once validated.
@@ -59,7 +59,6 @@ void call(Map config = [:]) {
 
     // Test flags
     boolean runE2E         = config.runE2E         ?: false
-    boolean runK6          = config.runK6          ?: false
     // OWASP ZAP baseline scan against the deployed PREPROD site (CST 3.2 lists
     // Trivy + Gitleaks + OWASP as the PREPROD security barrier).
     boolean runZap         = config.runZap         ?: false
@@ -85,11 +84,6 @@ void call(Map config = [:]) {
     int appPort        = config.appPort        ?: 3000
 
     String dockerfilePath = config.dockerfile ?: 'Dockerfile'
-
-    // K6 Performance settings
-    int k6Vus          = config.k6Vus          ?: 50
-    String k6Duration  = config.k6Duration     ?: '3m'
-    String k6Script    = config.k6Script       ?: 'tests/performance/load-test.js'
 
     // E2E settings
     String e2eFramework   = config.e2eFramework   ?: 'playwright'  // 'playwright' or 'cypress'
@@ -548,7 +542,7 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: Deploy PREPROD
-            // Deployed before E2E/K6 so those suites validate the freshly
+            // Deployed before E2E/ZAP so those suites validate the freshly
             // promoted PREPROD build (iso-prod), per the CST deployment process.
             // =================================================================
             stage('Deploy PREPROD') {
@@ -587,30 +581,6 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: K6 Performance Tests (against PREPROD)
-            // =================================================================
-            stage('K6 Performance') {
-                when {
-                    expression { return env.BRANCH_NAME == 'main' && runK6 }
-                }
-                steps {
-                    runK6Performance([
-                        hostWorkspace : env.HOST_WORKSPACE,
-                        traefikNetwork: traefikNetwork,
-                        preprodDomain : preprodDomain,
-                        k6Vus         : k6Vus,
-                        k6Duration    : k6Duration,
-                        k6Script      : k6Script
-                    ])
-                }
-                post {
-                    always {
-                        archiveArtifacts(artifacts: 'k6-results.json, k6-summary.json', allowEmptyArchive: false)
-                    }
-                }
-            }
-
-            // =================================================================
             // STAGE: OWASP ZAP Baseline (against PREPROD)
             // Third leg of the PREPROD security barrier required by the CST
             // (Trivy on images, Gitleaks on secrets, OWASP on the running site).
@@ -637,9 +607,9 @@ void call(Map config = [:]) {
             // =================================================================
             // STAGE: Monitor PREPROD
             // The CST asks for 5 minutes of post-deploy metrics on PREPROD with
-            // an automatic rollback if the health check fails. It runs after the
-            // E2E and K6 stages on purpose: instability shows up once the load
-            // test has actually stressed the container, not on an idle one.
+            // an automatic rollback if the health check fails. It runs last on
+            // purpose: instability shows up once E2E and ZAP have actually
+            // exercised the container, not on an idle one.
             // =================================================================
             stage('Monitor PREPROD') {
                 when {
@@ -1779,61 +1749,6 @@ void publishE2EReports(String framework) {
         reportFiles          : 'index.html',
         reportName           : 'E2E Test Report'
     ])
-}
-
-void runK6Performance(Map config) {
-    String hostWorkspace = config.hostWorkspace
-    String traefikNetwork = config.traefikNetwork
-    String preprodDomain = config.preprodDomain
-    int k6Vus = config.k6Vus
-    String k6Duration = config.k6Duration
-    String k6Script = config.k6Script
-
-    // Same reasoning as runE2ETests: say what is missing instead of letting k6
-    // fail on an unreadable path deep inside a docker run.
-    if (!fileExists(k6Script)) {
-        error("runK6 is enabled but the K6 script '${k6Script}' was not found in this project. " +
-            'Add it, point k6Script at the right path, or set runK6: false in the project ' +
-            'Jenkinsfile until the script exists.')
-    }
-
-    sh """
-        docker run --rm \
-            --user 0:0 \
-            -v "${hostWorkspace}:/scripts" \
-            --network ${traefikNetwork} \
-            -e BASE_URL=https://${preprodDomain} \
-            -e K6_VUS=${k6Vus} \
-            -e K6_DURATION=${k6Duration} \
-            grafana/k6:latest run \
-            --vus ${k6Vus} \
-            --duration ${k6Duration} \
-            --out json=/scripts/k6-results.json \
-            --summary-export=/scripts/k6-summary.json \
-            /scripts/${k6Script}
-    """
-
-    // grafana/k6 exits 0 even when every VU failed to reach the target (DNS
-    // failure, network unreachable, etc.) as long as the configured
-    // thresholds evaluate true on zero samples - which they do, since
-    // "p(95)<2000" on an empty set is vacuously true. That let a build pass
-    // "K6 Performance" while never actually sending a single request. Count
-    // recorded samples in the raw JSON output and fail loudly if there are
-    // none, instead of relying on k6's exit code alone.
-    if (!fileExists('k6-results.json')) {
-        error('K6 did not produce k6-results.json - the run failed before recording any samples.')
-    }
-
-    int sampleCount = sh(
-        script: 'grep -c \'"type":"Point"\' k6-results.json || true',
-        returnStdout: true
-    ).trim() as Integer
-
-    if (sampleCount == 0) {
-        error("K6 completed without error but recorded zero samples (0 requests reached " +
-            "${preprodDomain}). The load test did not actually run - check network " +
-            'connectivity from the Jenkins agent or errors in the script output above.')
-    }
 }
 
 void cleanupWorkspace(String hostWorkspace) {

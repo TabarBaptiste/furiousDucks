@@ -24,8 +24,9 @@ ciPipeline(
     deployProd    : true,
 
     // Test toggles
+    // Load testing is NOT here: it runs as its own scheduled job, see
+    // Jenkinsfile.k6.
     runE2E        : true,
-    runK6         : true,
 
     // Domains (one per environment)
     // DEV/PREPROD -> wk-* (workflow platform domain)

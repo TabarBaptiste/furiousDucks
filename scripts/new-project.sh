@@ -125,7 +125,7 @@ ask PROJECT_NAME  "Project slug (lowercase, no spaces)"
 ask PROJECT_STACK "Stack (node / php / python / ruby)" "node"
 ask APP_PORT      "Container port exposed by the app"   "3000"
 ask_bool RUN_E2E  "Enable E2E tests (Cypress/Playwright)" "true"
-ask_bool RUN_K6   "Enable K6 load tests"                  "true"
+ask_bool RUN_K6   "Generate the scheduled K6 load-test job" "true"
 
 sep "2/6  Infrastructure URLs"
 
@@ -229,7 +229,6 @@ ciPipeline(
     deployProd    : true,
 
     runE2E        : ${RUN_E2E},
-    runK6         : ${RUN_K6},
 
     devDomain     : '${DEV_DOMAIN}',
     preprodDomain : '${PREPROD_DOMAIN}',
@@ -238,6 +237,26 @@ ciPipeline(
     appPort       : ${APP_PORT}
 )
 JENKINSFILE
+
+# Generate Jenkinsfile.k6 - load testing is a separate, scheduled job, not a
+# stage of the build pipeline. It needs its own Jenkins Pipeline job (see the
+# generated README).
+COMMIT_FILES="Jenkinsfile README.md"
+if [[ "${RUN_K6}" == "true" ]]; then
+  cat > Jenkinsfile.k6 << K6FILE
+@Library('furious-ducks-shared-library') _
+
+k6Pipeline(
+    projectName: '${PROJECT_NAME}',
+    targetUrl  : 'https://${PREPROD_DOMAIN}',
+    k6Script   : 'tests/performance/load-test.js',
+    k6Vus      : 50,
+    k6Duration : '3m',
+    cron       : 'H 2 * * 1'
+)
+K6FILE
+  COMMIT_FILES="${COMMIT_FILES} Jenkinsfile.k6"
+fi
 
 # Generate README
 cat > README.md << README
@@ -267,18 +286,27 @@ Le pipeline est défini dans \`Jenkinsfile\` via la shared library \`furious-duc
 Pour modifier le comportement du pipeline, modifiez uniquement le \`Jenkinsfile\` — aucun accès Jenkins requis.
 
 Stack : \`${PROJECT_STACK}\` | Port applicatif : \`${APP_PORT}\`
+
+## Tests de charge
+
+Les tests de charge k6 ne font pas partie du pipeline de build : ils tournent
+dans un job Jenkins dédié, planifié, défini par \`Jenkinsfile.k6\`.
+
+À créer une fois dans Jenkins : job de type *Pipeline* (pas multibranch) sur ce
+dépôt, branche \`main\`, script path \`Jenkinsfile.k6\`. Lancez-le une première
+fois manuellement pour que Jenkins enregistre le cron et les paramètres.
 README
 
 git config user.email "devops@${DOMAIN_WK}"
 git config user.name  "Furious Ducks DevOps"
 
-git add Jenkinsfile README.md
+git add ${COMMIT_FILES}
 git commit -m "ci: initialise project with Furious Ducks CI/CD workflow
 
 - Add Jenkinsfile using furious-ducks-shared-library
 - Stack: ${PROJECT_STACK}, port: ${APP_PORT}
 - Environments: DEV / PREPROD / PROD
-- E2E: ${RUN_E2E}, K6: ${RUN_K6}"
+- E2E: ${RUN_E2E}, K6 (scheduled job): ${RUN_K6}"
 
 # Push main
 git remote add origin "${REPO_SSH}"

@@ -24,8 +24,9 @@ ciPipeline(
     deployProd    : true,
 
     // Test toggles
+    // Load testing is NOT here: it runs as its own scheduled job, see
+    // Jenkinsfile.k6.thetiptop.
     runE2E        : true,
-    runK6         : true,
     runZap        : true,   // OWASP ZAP baseline against PREPROD
 
     // Post-deploy stability watch on PREPROD, with automatic rollback
@@ -58,10 +59,6 @@ ciPipeline(
 
     // Path to the Dockerfile (monorepo layout: app lives under webapp/)
     dockerfile    : 'webapp/Dockerfile',
-
-    // K6 performance test configuration
-    k6Vus         : 100,
-    k6Duration    : '5m',
 
     // Backend API (NestJS), deployed alongside the frontend.
     // Wired for DEV, PREPROD and PROD (PROD uses its own dedicated database
