@@ -234,8 +234,16 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: SonarQube Analysis
+            // Reserve aux branches qui deploient quelque part (develop/main/tags) :
+            // une analyse par feature/fix branch n'apporte rien une fois la MR
+            // relue, et sature inutilement le projet SonarQube et les credits
+            // GitLab CI. Lint + Unit Tests restent inconditionnels : rapides, et
+            // c'est le seul retour qu'une branche jetable obtient avant sa MR.
             // =================================================================
             stage('SonarQube Analysis') {
+                when {
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                }
                 steps {
                     withSonarQubeEnv('SonarQube') {
                         runSonarAnalysis(stack, sonarProject)
@@ -247,6 +255,9 @@ void call(Map config = [:]) {
             // STAGE: Quality Gate
             // =================================================================
             stage('Quality Gate') {
+                when {
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                }
                 steps {
                     waitForQualityGateResult()
                 }
