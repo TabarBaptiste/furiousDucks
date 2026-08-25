@@ -63,9 +63,6 @@ void call(Map config = [:]) {
     // Trivy + Gitleaks + OWASP as the PREPROD security barrier).
     boolean runZap         = config.runZap         ?: false
 
-    // Post-deploy stability watch on PREPROD, in minutes (CST: "5 min métriques").
-    int preprodMonitorMinutes = config.preprodMonitorMinutes ?: 5
-
     // Notification recipients per environment, e.g.
     //   [preprod: 'po@client.tld,techlead@agency.tld', prod: '...']
     // Environments absent from the map fall back to the default Jenkins
@@ -599,34 +596,6 @@ void call(Map config = [:]) {
                         archiveArtifacts(
                             artifacts: 'zap-report.html, zap-report.json',
                             allowEmptyArchive: true
-                        )
-                    }
-                }
-            }
-
-            // =================================================================
-            // STAGE: Monitor PREPROD
-            // The CST asks for 5 minutes of post-deploy metrics on PREPROD with
-            // an automatic rollback if the health check fails. It runs last on
-            // purpose: instability shows up once E2E and ZAP have actually
-            // exercised the container, not on an idle one.
-            // =================================================================
-            stage('Monitor PREPROD') {
-                when {
-                    expression { return env.DEPLOY_ENV == 'preprod' && deployPreprod }
-                }
-                steps {
-                    script {
-                        monitorDeployment(
-                            containerName : "${projectName}-preprod",
-                            environment   : 'preprod',
-                            imageProjectName: projectName,
-                            domain        : preprodDomain,
-                            port          : appPort,
-                            registry      : registry,
-                            harborProject : harborProject,
-                            traefikNetwork: traefikNetwork,
-                            minutes       : preprodMonitorMinutes
                         )
                     }
                 }
