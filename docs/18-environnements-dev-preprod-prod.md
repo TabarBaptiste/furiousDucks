@@ -32,7 +32,7 @@ sur une branche jetable avant sa Merge Request.
 | | DEV | PREPROD | PROD |
 |---|---|---|---|
 | Ref declenchante | push sur `develop` | push sur `main` | tag `vX.Y.Z` |
-| Domaine | `*-dev.wk-archi-o24a-4-5-g1.fr` | `*-preprod.wk-archi-o24a-4-5-g1.fr` | `*.dsp5-archi-o24a-4-5-g1.fr` (frontend) / `*.wk-archi-o24a-4-5-g1.fr` (API) |
+| Domaine | `*-dev.wk-archi-o24a-4-5-g1.fr` | `*-preprod.wk-archi-o24a-4-5-g1.fr` | `dsp5-archi-o24a-4-5-g1.fr` (frontend) / `api.dsp5-archi-o24a-4-5-g1.fr` (API) |
 | Methode de deploiement | remplacement simple du conteneur | remplacement simple du conteneur | Blue/Green (`deployBlueGreen.groovy`) |
 | Approbation manuelle | non | non | oui (stage `Approval PROD`) |
 | SonarQube / Quality Gate | oui | oui | oui (herite du build qui a promu le tag) |

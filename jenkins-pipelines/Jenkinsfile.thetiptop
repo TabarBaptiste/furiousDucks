@@ -49,7 +49,7 @@ ciPipeline(
     // PROD -> dsp5-* (site internet domain, required for the delivered client site)
     devDomain     : "${projectName}-dev.wk-archi-o24a-4-5-g1.fr",
     preprodDomain : "${projectName}-preprod.wk-archi-o24a-4-5-g1.fr",
-    prodDomain    : "${projectName}.dsp5-archi-o24a-4-5-g1.fr",
+    prodDomain    : "dsp5-archi-o24a-4-5-g1.fr",
 
     // Application port
     appPort       : 3000,
@@ -68,9 +68,8 @@ ciPipeline(
     // API domains (one per environment)
     devApiDomain    : "${projectName}-api-dev.wk-archi-o24a-4-5-g1.fr",
     preprodApiDomain: "${projectName}-api-preprod.wk-archi-o24a-4-5-g1.fr",
-    // PROD API stays on the wk zone: dsp5 only hosts the frontend and has no
-    // wildcard certificate, while wk has one.
-    prodApiDomain   : "${projectName}-api.wk-archi-o24a-4-5-g1.fr",
+    // PROD API -> sous-domaine du domaine site internet (dsp5)
+    prodApiDomain   : "api.dsp5-archi-o24a-4-5-g1.fr",
 
     // Environment-independent API variables only. FRONTEND_URL and CORS_ORIGINS
     // are derived by the shared library from the target environment's frontend

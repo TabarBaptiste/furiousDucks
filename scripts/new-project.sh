@@ -32,6 +32,7 @@
 #   JENKINS_TOKEN       Jenkins API token
 #   DOMAIN_WK           Workflow domain  (e.g. wk-archi-o24a-4-5-g1.fr)
 #   DOMAIN_DSP5         App domain       (e.g. dsp5-archi-o24a-4-5-g1.fr)
+#   PROD_DOMAIN         Optional. Prod domain (default: <project>.$DOMAIN_DSP5)
 #   GIT_SSH_PORT        SSH port for GitLab (default: 2222)
 ###############################################################################
 set -euo pipefail
@@ -137,6 +138,13 @@ ask JENKINS_USER "Jenkins admin username" "admin"
 ask JENKINS_TOKEN "Jenkins API token"
 ask DOMAIN_WK    "Workflow domain"   "wk-archi-o24a-4-5-g1.fr"
 ask DOMAIN_DSP5  "App (client) domain" "dsp5-archi-o24a-4-5-g1.fr"
+if [[ -z "${PROD_DOMAIN:-}" ]]; then
+  if [[ "${NON_INTERACTIVE}" == true ]]; then
+    PROD_DOMAIN="${PROJECT_NAME}.${DOMAIN_DSP5}"
+  else
+    ask PROD_DOMAIN "Prod domain" "${PROJECT_NAME}.${DOMAIN_DSP5}"
+  fi
+fi
 
 # Derived values
 GITLAB_HOST="${GITLAB_URL#https://}"
@@ -147,7 +155,6 @@ JENKINS_WEBHOOK_URL="${JENKINS_URL}/project/${PROJECT_NAME}"
 
 DEV_DOMAIN="${PROJECT_NAME}-dev.${DOMAIN_WK}"
 PREPROD_DOMAIN="${PROJECT_NAME}-preprod.${DOMAIN_WK}"
-PROD_DOMAIN="${PROJECT_NAME}.${DOMAIN_DSP5}"
 
 echo ""
 log "INFO" "Project        : ${PROJECT_NAME}"
