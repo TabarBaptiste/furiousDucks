@@ -16,6 +16,12 @@
   - Developpeur : lancement et consultation des pipelines
 - **Agents Docker ephemeres** : chaque build s'execute dans un conteneur isole
 
+> Ce document couvre l'installation et l'administration de Jenkins. Pour le
+> detail stage par stage du pipeline (`ciPipeline.groovy`), la matrice
+> branche x stage et sa justification, voir `19-pipeline-ci-cd.md`. Pour le
+> mapping branche -> environnement et les differences DEV/PREPROD/PROD, voir
+> `18-environnements-dev-preprod-prod.md`.
+
 ## 2. Configuration
 
 ### Image et conteneur

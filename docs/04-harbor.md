@@ -237,12 +237,58 @@ docker push registry.wk-archi-o24a-4-5-g1.fr/furious-ducks/test:1.0.0
 
 ### 3.8 Configurer la politique de retention
 
+Deux regles complementaires, a creer dans cet ordre. Harbor evalue toutes les
+regles et **conserve une image des qu'au moins une regle la retient** : la regle
+2 protege donc les releases meme quand la regle 1 ne les garderait plus.
+
+**Regle 1 - images de travail (DEV / PREPROD)**
+
 1. Sur le projet > **Tag Retention** > **+ Add Rule**
 2. Repository : **all repositories**
-3. Tag : **all tags**
+3. Tag : **matching** `develop-*,main-*`
 4. Retention : **retain the most recent 10 tags**
-5. Schedule : Weekly (Sunday 02:00)
-6. **Save**
+5. **Save**
+
+**Regle 2 - releases de production**
+
+1. **+ Add Rule**
+2. Repository : **all repositories**
+3. Tag : **matching** `v*`
+4. Retention : **retain always**
+5. **Save**
+
+**Images non taguees**
+
+Sur la meme page, activer **"allow deletion of untagged artifacts"** : les
+images orphelines (laissees par un retag) sont alors purgees. Le CST fixe ce
+delai a 7 jours, applique par la garbage collection planifiee (voir 3.8 bis).
+
+**Planification**
+
+Schedule de la politique : **Weekly (Sunday 02:00)**, avant la sauvegarde
+hebdomadaire Restic du dimanche - le contenu sauvegarde est ainsi deja purge
+du superflu (justification CST 7.5).
+
+> **Pourquoi deux regles et pas une seule `all tags` ?**
+> Une regle unique "retain the most recent 10" sur `all tags` supprimerait les
+> tags `v*` des que 10 images `develop-*`/`main-*` plus recentes existent - soit
+> quelques jours. Or le stage **Promote Image** du pipeline retague l'image
+> `main-<sha>` en `v1.2.3` sans jamais reconstruire, et `scripts/rollback.sh`
+> revient sur une release anterieure en la retirant de Harbor. Perdre un tag
+> `v*`, c'est perdre la capacite de rollback ET la promesse de reproductibilite
+> (CST 2.4 : "la meme image construite une fois peut etre reutilisee a
+> l'identique a travers les environnements sans reconstruction").
+
+### 3.8 bis Configurer la garbage collection
+
+La politique de retention **supprime les references** aux images ; la garbage
+collection **libere reellement l'espace disque** des couches devenues
+orphelines. Sans elle, `/data/harbor` continue de grossir malgre la retention.
+
+1. **Administration > Garbage Collection**
+2. Cocher **"Delete Untagged Artifacts"**
+3. Schedule : **Weekly (Sunday 03:00)** - apres la politique de retention de 02:00
+4. **Save**
 
 ### 3.9 Configurer le compte Jenkins
 
@@ -365,8 +411,14 @@ Resultat attendu : push et pull reussis sans erreur.
 ### Verifier les politiques de retention
 
 1. Naviguer vers **Projects > (nom du projet) > Configuration > Tag Retention**
-2. Verifier que la politique "garder les 10 dernieres versions" est configuree
-3. Verifier que la suppression des images non taguees apres 7 jours est active
+2. Verifier la presence des **deux** regles (voir 3.8) :
+   - `develop-*,main-*` > retain the most recent 10 tags
+   - `v*` > retain always
+3. Verifier que **"allow deletion of untagged artifacts"** est coche
+4. Utiliser **Dry Run** : la simulation doit lister des images `develop-*`/`main-*`
+   a supprimer, et **aucune** image `v*`. Si un tag `v*` apparait, la regle 2 est
+   mal configuree - le rollback et la promotion d'image sont alors compromis.
+5. **Administration > Garbage Collection** : verifier la planification hebdomadaire
 
 ## 6. Depannage
 

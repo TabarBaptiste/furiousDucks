@@ -140,7 +140,15 @@ void call(Map config = [:]) {
         options {
             timestamps()
             disableConcurrentBuilds()
-            buildDiscarder(logRotator(numToKeepStr: '20'))
+            // Deux retentions distinctes, parce que les deux choses ne pesent pas
+            // le meme poids : les logs et metadonnees d'un build sont legers et
+            // servent a la tracabilite, les artefacts (rapports Trivy/Semgrep/
+            // Gitleaks, rapport HTML Playwright) sont lourds et ne servent qu'au
+            // diagnostic recent. On garde donc l'historique plus longtemps que
+            // les fichiers. Meme principe que k6Pipeline.groovy (60/20), calibre
+            // plus court ici : la CI tourne a chaque push, le job k6 une fois
+            // par semaine.
+            buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
             timeout(time: 60, unit: 'MINUTES')
             ansiColor('xterm')
         }
@@ -202,6 +210,11 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: Install Dependencies
+            // Inconditionnel, tags compris : "Run Prisma Migrations" tourne sur
+            // le chemin PROD et s'appuie sur les node_modules installes ici pour
+            // resoudre le CLI Prisma a la version du lockfile. La base PROD est
+            // un conteneur dedie et nait vide (voir dbContainerFor) - rien n'est
+            // repris de PREPROD - donc les migrations y sont indispensables.
             // =================================================================
             stage('Install Dependencies') {
                 steps {
@@ -211,8 +224,14 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: Lint
+            // Hors chemin PROD : un tag ne reconstruit rien (voir "Promote
+            // Image"), il promeut l'image deja construite et deja lintee sur
+            // main. Relinter le meme commit ne peut rien apprendre de neuf.
             // =================================================================
             stage('Lint') {
+                when {
+                    expression { return env.DEPLOY_ENV != 'prod' }
+                }
                 steps {
                     runLint(stack, env.HOST_WORKSPACE)
                 }
@@ -220,8 +239,15 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: Unit Tests
+            // Reserve aux branches qui deploient : sur feature/* aucun artefact
+            // n'en sort et le controle se fait a la merge request vers develop ;
+            // sur un tag, le commit a deja ete teste sur main (build once,
+            // deploy everywhere).
             // =================================================================
             stage('Unit Tests') {
+                when {
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
+                }
                 steps {
                     runUnitTests(stack, env.HOST_WORKSPACE)
                 }
@@ -239,10 +265,13 @@ void call(Map config = [:]) {
             // relue, et sature inutilement le projet SonarQube et les credits
             // GitLab CI. Lint + Unit Tests restent inconditionnels : rapides, et
             // c'est le seul retour qu'une branche jetable obtient avant sa MR.
+            // Exclu du chemin PROD pour la meme raison que Lint/Unit Tests : un
+            // tag promeut l'image de main sans rien reconstruire, et le commit
+            // a deja ete analyse a ce moment-la.
             // =================================================================
             stage('SonarQube Analysis') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     withSonarQubeEnv('SonarQube') {
@@ -256,10 +285,10 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Quality Gate') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
-                    waitForQualityGateResult()
+                    waitForQualityGateResult(env.DEPLOY_ENV)
                 }
             }
 
@@ -301,10 +330,14 @@ void call(Map config = [:]) {
             // multi-stage and rebuilds from source anyway, so its output was
             // never consumed. It also filled the workspace, inflating the
             // Docker build context to ~1 GB and invalidating the COPY layer.
+            //
+            // PROD is excluded: a tag build promotes the already-built, already-
+            // scanned PREPROD image instead of rebuilding from source (see
+            // "Promote Image" below) - build once, deploy everywhere.
             // =================================================================
             stage('Docker Build') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     script {
@@ -342,11 +375,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Docker Build API (optional separate backend, DEV + PREPROD + PROD)
+            // STAGE: Docker Build API (optional separate backend, DEV + PREPROD)
             // =================================================================
             stage('Docker Build API') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     script {
@@ -363,10 +396,14 @@ void call(Map config = [:]) {
             // =================================================================
             // STAGE: Trivy Security Scan
             // Runs BEFORE the push so a vulnerable image never reaches Harbor.
+            // PROD excluded: the tag build promotes the PREPROD image bit-for-
+            // bit (see "Promote Image"), and that same image was already
+            // scanned when it was built for PREPROD - rescanning identical
+            // bits adds nothing.
             // =================================================================
             stage('Trivy Scan') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG, env.HOST_WORKSPACE)
@@ -374,11 +411,11 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
-            // STAGE: Trivy Security Scan API (optional separate backend, DEV + PREPROD + PROD)
+            // STAGE: Trivy Security Scan API (optional separate backend, DEV + PREPROD)
             // =================================================================
             stage('Trivy Scan API') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
                     trivyScan("${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.HOST_WORKSPACE)
@@ -387,25 +424,51 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: Docker Push (to Harbor registry)
+            // PROD excluded: "Promote Image" below does its own push, of the
+            // re-tagged PREPROD image rather than one built in this run.
             // =================================================================
             stage('Docker Push') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
-                    pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
+                    pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG, env.DEPLOY_ENV == 'dev')
                 }
             }
 
             // =================================================================
-            // STAGE: Docker Push API (optional separate backend, DEV + PREPROD + PROD)
+            // STAGE: Docker Push API (optional separate backend, DEV + PREPROD)
             // =================================================================
             stage('Docker Push API') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod'] }
                 }
                 steps {
-                    pushDockerImage(registry, "${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.BRANCH_NAME == 'develop')
+                    pushDockerImage(registry, "${env.DOCKER_IMAGE}-api", env.IMAGE_TAG, env.DEPLOY_ENV == 'dev')
+                }
+            }
+
+            // =================================================================
+            // STAGE: Promote Image (PROD only)
+            // Build once, deploy everywhere: a tag build re-tags and pushes the
+            // exact image already built, scanned and validated for PREPROD on
+            // this same commit, instead of rebuilding from source. The source
+            // tag is reconstructed the same way "Prepare" builds it for a
+            // branch build: "main-<short-sha>".
+            // =================================================================
+            stage('Promote Image') {
+                when {
+                    expression { return env.DEPLOY_ENV == 'prod' }
+                }
+                steps {
+                    script {
+                        String preprodTag = "main-${env.GIT_COMMIT_SHORT}"
+                        echo "Promoting ${env.DOCKER_IMAGE}:${preprodTag} to ${env.IMAGE_TAG}"
+                        promoteImage(registry, env.DOCKER_IMAGE, preprodTag, env.IMAGE_TAG)
+                        if (hasApi) {
+                            promoteImage(registry, "${env.DOCKER_IMAGE}-api", preprodTag, env.IMAGE_TAG)
+                        }
+                    }
                 }
             }
 
@@ -500,7 +563,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Deploy DEV') {
                 when {
-                    expression { return env.BRANCH_NAME == 'develop' && deployDev }
+                    expression { return env.DEPLOY_ENV == 'dev' && deployDev }
                 }
                 steps {
                     deployContainer(
@@ -576,7 +639,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('E2E Tests') {
                 when {
-                    expression { return env.BRANCH_NAME == 'main' && runE2E }
+                    expression { return env.DEPLOY_ENV == 'preprod' && runE2E }
                 }
                 steps {
                     runE2ETests(e2eFramework, env.HOST_WORKSPACE, traefikNetwork, preprodDomain)
@@ -617,7 +680,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Approval PROD') {
                 when {
-                    expression { return deployProd && (env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/) }
+                    expression { return env.DEPLOY_ENV == 'prod' && deployProd }
                 }
                 steps {
                     script {
@@ -646,7 +709,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Deploy PROD API') {
                 when {
-                    expression { return hasApi && deployProd && (env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/) }
+                    expression { return hasApi && env.DEPLOY_ENV == 'prod' && deployProd }
                 }
                 steps {
                     script {
@@ -677,7 +740,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Deploy PROD') {
                 when {
-                    expression { return deployProd && (env.TAG_NAME ==~ /v\d+\.\d+\.\d+.*/) }
+                    expression { return env.DEPLOY_ENV == 'prod' && deployProd }
                 }
                 steps {
                     deployBlueGreen(
@@ -699,14 +762,21 @@ void call(Map config = [:]) {
         // Post-build actions
         // =====================================================================
         post {
-            // TEMPORAIRE (debug pipeline en cours) : cleanupWorkspace() déplacé de
-            // `always` vers `success` uniquement, pour que "Restart from Stage" ait
-            // un workspace intact à réutiliser après un échec. A REMETTRE dans
-            // `always {}` une fois le pipeline stabilisé, sinon les workspaces des
-            // builds échoués s'accumulent sur le disque Jenkins sans être nettoyés.
-            success {
+            // cleanupWorkspace() archive les rapports (Trivy, Semgrep, Gitleaks,
+            // HTML) AVANT de vider le workspace : il doit donc tourner quel que
+            // soit le resultat du build. Cantonne a `success`, un build qui
+            // echouait sur une CVE critique Trivy n'archivait jamais le rapport
+            // Trivy qui explique l'echec, et son workspace restait sur le disque
+            // Jenkins indefiniment. Les logs console, eux, sont captures par
+            // Jenkins independamment de ce bloc et restent consultables.
+            always {
                 script {
                     cleanupWorkspace(env.HOST_WORKSPACE)
+                }
+            }
+
+            success {
+                script {
                     notifyBuild('SUCCESS', projectName, env.DEPLOY_ENV,
                         notifyRecipients[env.DEPLOY_ENV] ?: '')
                 }
@@ -839,88 +909,6 @@ void runZapBaseline(String hostWorkspace, String traefikNetwork, String targetDo
     } else {
         unstable("OWASP ZAP baseline reported findings (exit ${zapExit}) - review zap-report.html")
     }
-}
-
-// =============================================================================
-// Helper: Watch a freshly deployed container for a few minutes and roll it back
-// if it degrades. The CST asks for 5 minutes of post-deploy metrics on PREPROD
-// with an automatic rollback on a failed health check; deployContainer only
-// checks health once, at startup, so nothing caught a container that died a
-// couple of minutes later.
-//
-// Tolerates isolated blips (a single failed probe is not a rollback) but reacts
-// to three consecutive failures, keeping the rollback inside the CST's
-// "under a minute" budget.
-// =============================================================================
-void monitorDeployment(Map args) {
-    int minutes = args.minutes ?: 5
-    if (minutes <= 0) {
-        echo 'Post-deploy monitoring disabled (minutes <= 0)'
-        return
-    }
-
-    String containerName = args.containerName
-    String healthPath = args.healthPath ?: '/health'
-    int checkInterval = 15
-    int checks = ((minutes * 60) / checkInterval).intValue()
-
-    echo "Monitoring ${containerName} for ${minutes} minutes..."
-    int monitorExit = sh(
-        script: """
-            FAILURES=0
-            MAX_FAILURES=3
-
-            for i in \$(seq 1 ${checks}); do
-                if docker run --rm --network ${args.traefikNetwork} curlimages/curl:latest \
-                    -sf "http://${containerName}:${args.port}${healthPath}" > /dev/null 2>&1; then
-                    FAILURES=0
-                else
-                    FAILURES=\$((FAILURES + 1))
-                    echo "  WARNING: health check failed (\${FAILURES}/\${MAX_FAILURES})"
-                    if [ "\$FAILURES" -ge "\$MAX_FAILURES" ]; then
-                        echo "ERROR: ${containerName} degraded during monitoring"
-                        docker logs --tail 100 ${containerName} || true
-                        exit 1
-                    fi
-                fi
-                sleep ${checkInterval}
-            done
-        """,
-        returnStatus: true
-    )
-
-    if (monitorExit == 0) {
-        echo "${containerName} stayed healthy for ${minutes} minutes"
-        return
-    }
-
-    String previousTag = sh(
-        script: "docker inspect --format='{{index .Config.Labels \"deploy.previous-tag\"}}' ${containerName} 2>/dev/null || true",
-        returnStdout: true
-    ).trim()
-    if (previousTag == '<no value>') { previousTag = '' }
-
-    if (!previousTag) {
-        error("${containerName} degraded during post-deploy monitoring and no " +
-            'previous version is recorded to roll back to.')
-    }
-
-    echo "Rolling ${containerName} back to ${previousTag}"
-    deployContainer(
-        containerName   : containerName,
-        imageProjectName: args.imageProjectName,
-        projectName     : args.imageProjectName,
-        environment     : args.environment,
-        imageTag        : previousTag,
-        domain          : args.domain,
-        port            : args.port,
-        healthPath      : healthPath,
-        registry        : args.registry,
-        harborProject   : args.harborProject,
-        traefikNetwork  : args.traefikNetwork
-    )
-    error("${containerName} degraded during post-deploy monitoring and was " +
-        "rolled back to ${previousTag}.")
 }
 
 // =============================================================================
@@ -1270,7 +1258,7 @@ void buildDockerImage(Map args) {
             -f ${args.dockerfilePath} \
             .
     """
-    if (env.BRANCH_NAME == 'develop') {
+    if (env.DEPLOY_ENV == 'dev') {
         sh "docker tag ${args.dockerImage}:${args.imageTag} ${args.dockerImage}:latest"
     }
 }
@@ -1543,14 +1531,33 @@ void runSonarAnalysis(String stack, String sonarProject) {
     sh "${scannerHome}/bin/sonar-scanner ${scannerArgs}"
 }
 
-void waitForQualityGateResult() {
+// The gate's verdict used to be discarded: waitForQualityGate ran with
+// abortPipeline: false and nothing ever read the .status it returns, so a
+// failing gate never showed up as anything but a green Sonar dashboard link.
+// PREPROD/PROD (main/tag) now block on it, matching the CST; DEV (develop)
+// keeps the fast, non-blocking feedback a branch still under active work needs.
+void waitForQualityGateResult(String deployEnv) {
+    boolean blocking = deployEnv in ['preprod', 'prod']
+    Map qualityGate
     try {
         timeout(time: 5, unit: 'MINUTES') {
-            waitForQualityGate abortPipeline: false
+            qualityGate = waitForQualityGate(abortPipeline: false)
         }
     } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
-        echo 'Quality Gate timeout - continuing pipeline (quality gate is non-blocking)'
+        echo 'Quality Gate timeout - continuing pipeline'
         currentBuild.result = 'UNSTABLE'
+        return
+    }
+
+    if (qualityGate.status == 'OK') {
+        echo "SonarQube Quality Gate passed: ${qualityGate.status}"
+        return
+    }
+
+    if (blocking) {
+        error("SonarQube Quality Gate failed: ${qualityGate.status} - blocking deploy to ${deployEnv}")
+    } else {
+        unstable("SonarQube Quality Gate failed: ${qualityGate.status}")
     }
 }
 
@@ -1569,6 +1576,24 @@ void pushDockerImage(String registry, String dockerImage, String imageTag, boole
             docker logout ${registry}
         """
     }
+}
+
+// =============================================================================
+// Helper: Promote an already-built, already-scanned image to a new tag,
+// without rebuilding it. Used by "Promote Image" so a PROD release ships the
+// exact bits validated on PREPROD (build once, deploy everywhere) rather than
+// a fresh build of the same source that could drift (base image update,
+// non-pinned dependency, ...).
+// =============================================================================
+void promoteImage(String registry, String dockerImage, String sourceTag, String targetTag) {
+    sh """
+        echo "\${HARBOR_CREDENTIALS_PSW}" | docker login ${registry} \
+            -u "\${HARBOR_CREDENTIALS_USR}" --password-stdin
+        docker pull ${dockerImage}:${sourceTag}
+        docker tag ${dockerImage}:${sourceTag} ${dockerImage}:${targetTag}
+        docker push ${dockerImage}:${targetTag}
+        docker logout ${registry}
+    """
 }
 
 void trivyScan(String dockerImage, String imageTag, String hostWorkspace) {
