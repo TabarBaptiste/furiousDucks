@@ -152,7 +152,7 @@ services:
   #   1st of month 04:00  -> /scripts/retention.sh          (prune old snaps)
   # ---------------------------------------------------------------------------
   ofelia:
-    image: mcuadros/ofelia:latest
+    image: mcuadros/ofelia:v0.3.22
     container_name: common-ofelia-ci
     command: daemon --docker
     volumes:

@@ -113,14 +113,43 @@ groups:
     rules:
 
       # -----------------------------------------------------------------------
-      # NOTE: ContainerDown was removed. It relied on the cAdvisor "name"
-      # label (container_last_seen{name=~".+"}), which cAdvisor never
-      # populates on this host: Docker 29's containerd-snapshotter storage
-      # backend isn't supported by cAdvisor's Docker container handler
-      # (confirmed on both v0.49.1 and v0.52.1 - see manager.go:1116 errors
-      # "failed to identify the read-write layer ID"). Individual service
-      # availability is covered instead by JenkinsDown, GitLabDown, etc.
-      # below, plus each container's own Docker healthcheck + restart policy.
+      # Container down: cAdvisor stops refreshing container_last_seen once a
+      # container stops, crashes, or is removed.
+      #
+      # HISTORY: this alert was removed when cAdvisor was on v0.49.1/v0.52.1,
+      # because the "name" label on container_last_seen was never populated
+      # under Docker's containerd-snapshotter storage backend (manager.go:1116
+      # "failed to identify the read-write layer ID"). The upgrade to cAdvisor
+      # v0.60.3 (see docker-compose.monitoring.yml) fixed this - verified live
+      # on this host: container_last_seen now carries a correct "name" label
+      # for every tracked container except the root cgroup ("/", excluded by
+      # the "common-.+" pattern below).
+      #
+      # Scoped to "common-.+" (platform services), not ".+" like the other
+      # container alerts: Jenkins' ephemeral Docker build agents are expected
+      # to stop constantly (docker-agent* templates, idleMinutes: 10) and
+      # would otherwise fire this alert on every teardown.
+      #
+      # Caveat: if cAdvisor evicts a stopped container's stats entirely
+      # (its internal retention for gone containers), the series disappears
+      # and this alert silently stops firing rather than staying in a
+      # "resolved" state - a general cAdvisor limitation, not specific to
+      # this rule.
+      # -----------------------------------------------------------------------
+      - alert: ContainerDown
+        expr: >
+          (time() - container_last_seen{name=~"common-.+"}) > 90
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.name }} appears to be down"
+          description: >
+            cAdvisor has not reported a fresh sample for container
+            {{ $labels.name }} in over 90 seconds. It may have stopped,
+            crashed, or been removed. Current staleness:
+            {{ $value | printf "%.0f" }}s.
+
       # -----------------------------------------------------------------------
       # Container CPU: sustained high CPU may starve other containers sharing
       # the same host.

@@ -6,8 +6,8 @@
 # service data) to Restic. Harbor is deployed separately from the main
 # docker-compose stacks via its official installer (see docs/04-harbor.md)
 # and stores everything under a single host bind mount (data_volume in
-# harbor.yml, default /data/harbor) rather than named Docker volumes - hence
-# a dedicated script instead of a BACKUP_TARGETS entry in backup-all.sh.
+# harbor.yml, default /data) rather than named Docker volumes - hence a
+# dedicated script instead of a BACKUP_TARGETS entry in backup-all.sh.
 #
 # Runs weekly (not daily like backup-all.sh): critical/promoted images only
 # change at release cadence (release/* and hotfix/* branches, GitFlow), and

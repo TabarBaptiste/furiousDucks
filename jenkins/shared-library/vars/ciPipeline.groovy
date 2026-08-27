@@ -1640,7 +1640,7 @@ void runSemgrep(String hostWorkspace) {
         script: """
             docker run --rm \
                 -v "${hostWorkspace}:/src" \
-                returntocorp/semgrep:latest \
+                semgrep/semgrep:1.175.0 \
                 semgrep scan \
                 --config=auto \
                 --error \

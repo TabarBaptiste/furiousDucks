@@ -22,12 +22,16 @@
 #          path: /metrics
 #   3. Edit Harbor's docker-compose.yml: attach the "proxy" service
 #      (container_name: nginx - Harbor's own naming, NOT "harbor-nginx") to
-#      the "ci_network" external network, comment out its "ports:" section
-#      entirely (both 80:8080 and 9090:9090 - Traefik handles public access,
-#      and 9090 must NOT be published on the host), and add Traefik labels:
+#      the "ci_network" AND "workflow-network" external networks - the same
+#      pattern every other Traefik-routed service in this file follows
+#      (traefik, gitlab, jenkins, sonarqube, mattermost all join both).
+#      Comment out its "ports:" section entirely (both 80:8080 and
+#      9090:9090 - Traefik handles public access, and 9090 must NOT be
+#      published on the host), and add Traefik labels:
 #        networks:
 #          - harbor
 #          - ci_network
+#          - workflow-network
 #        # ports:
 #        #   - 80:8080
 #        #   - 9090:9090
@@ -39,9 +43,11 @@
 #          - "traefik.http.routers.harbor.tls.certresolver=letsencrypt"
 #          - "traefik.http.routers.harbor.middlewares=secure-headers@file"
 #          - "traefik.http.services.harbor.loadbalancer.server.port=8080"
-#      Add ci_network as an external network in Harbor's compose:
+#      Add both networks as external in Harbor's compose:
 #        networks:
 #          ci_network:
+#            external: true
+#          workflow-network:
 #            external: true
 #   4. Restart Harbor: docker compose up -d
 #   5. IMPORTANT: re-running "./prepare" (e.g. after editing harbor.yml, or
