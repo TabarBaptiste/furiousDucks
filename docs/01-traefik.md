@@ -4,19 +4,25 @@
 
 - **Role** : Point d'entree unique HTTP/HTTPS pour tous les services du workflow CI/CD
 - **Fonctions** : routage automatique, TLS automatique (Let's Encrypt), middlewares de securite, dashboard
-- **Ports** :
+- **Ports publies sur l'hote** :
   - `80` : HTTP (redirection automatique vers HTTPS)
   - `443` : HTTPS (point d'entree principal)
-  - `8080` : dashboard interne
-- **Sous-domaine** : `traefik.wk-archi-o24a-4-5-g1.fr` (dashboard)
-- **Version** : Traefik v3.1
+- **Entrypoint interne** : `8082` (metriques Prometheus) - **non publie** sur l'hote,
+  joignable uniquement depuis les autres conteneurs de `ci_network`.
+  Le dashboard n'a pas non plus de port hote : il passe par le routeur HTTPS
+  `traefik.<domaine>` (service `api@internal`).
+- **Sous-domaine** : `traefik.wk-archi-o24a-4-5-g1.fr` (dashboard, protege par
+  basic auth `traefik-auth` + `rate-limit`)
+- **Version** : Traefik v3.7.8 (tag epingle dans `infrastructure/docker-compose.yml`)
 - **Gestion des sous-domaines** :
   - `git.wk-archi-o24a-4-5-g1.fr` (GitLab)
   - `ci.wk-archi-o24a-4-5-g1.fr` (Jenkins)
   - `registry.wk-archi-o24a-4-5-g1.fr` (Harbor)
   - `sonar.wk-archi-o24a-4-5-g1.fr` (SonarQube)
+  - `chat.wk-archi-o24a-4-5-g1.fr` (Mattermost)
   - `monitor.wk-archi-o24a-4-5-g1.fr` (Grafana)
-  - `prometheus.wk-archi-o24a-4-5-g1.fr` (Prometheus)
+  - `grafana.wk-archi-o24a-4-5-g1.fr` (Grafana, alias du meme service)
+  - `prometheus.wk-archi-o24a-4-5-g1.fr` (Prometheus, basic auth)
   - `s3.wk-archi-o24a-4-5-g1.fr` (MinIO API)
   - `minio.wk-archi-o24a-4-5-g1.fr` (MinIO Console)
 
@@ -25,7 +31,7 @@
 ### Fichier statique
 
 - Chemin : `infrastructure/traefik/traefik.yml`
-- Definition des entrypoints (web, websecure, dashboard)
+- Definition des entrypoints (`web` :80, `websecure` :443, `metrics` :8082)
 - Activation du provider Docker
 - Activation de l'API et du dashboard
 
@@ -55,7 +61,8 @@
 ### ACME (Let's Encrypt)
 
 - Challenge HTTP-01
-- Stockage des certificats dans un volume Docker
+- Stockage des certificats dans le fichier bind-monte `traefik/acme/acme.json`
+  (permissions 600 obligatoires), et non dans un volume Docker nomme
 - Renouvellement automatique avant expiration
 
 ### Decouverte Docker
@@ -164,9 +171,15 @@ docker logs common-traefik-ci | grep -i "Adding route"
 
 ### Voir les requetes en temps reel
 
+`accessLog.filePath` est commente dans `traefik.yml` : les logs d'acces sortent
+sur la sortie standard du conteneur.
+
 ```bash
-docker exec common-traefik-ci tail -f /var/log/traefik/access.log
+docker logs -f common-traefik-ci
 ```
+
+(Ils sont aussi collectes par Alloy et interrogeables dans Loki :
+`{container_name="common-traefik-ci"}`.)
 
 ### Recharger la configuration
 
@@ -248,8 +261,11 @@ Resultat attendu : presence des headers `Strict-Transport-Security`, `X-Frame-Op
 
 ### Verifier les metriques
 
+Les metriques sont exposees sur l'entrypoint interne `metrics` (:8082), pas sur
+le port du dashboard :
+
 ```bash
-docker exec common-traefik-ci wget -qO- http://localhost:8080/metrics | head
+docker exec common-prometheus-ci wget -qO- http://common-traefik-ci:8082/metrics | head
 ```
 
 Resultat attendu : metriques au format Prometheus (lignes `traefik_*`).

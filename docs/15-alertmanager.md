@@ -3,9 +3,12 @@
 ## 1. Presentation
 
 - **Role** : Reception, deduplication, groupement et routage des alertes generees par Prometheus
-- **Canaux de notification** : Email (SMTP) + Mattermost (webhook) + PagerDuty (optionnel)
+- **Canaux de notification configures** : Email (SMTP) et Mattermost (webhook
+  entrant, via `slack_configs` - les webhooks Mattermost sont compatibles
+  Slack). PagerDuty n'est pas configure (exemple d'extension en 4.5).
 - **Port** : `9093` (interne uniquement, accessible par Prometheus)
-- **Pas de sous-domaine** (service interne)
+- **Pas de sous-domaine et aucun port hote** (`traefik.enable=false`) :
+  l'administration passe exclusivement par `amtool` dans le conteneur
 - **Groupement** par `alertname` et `severity` (evite le spam d'alertes)
 - **Inhibition** : les alertes `critical` inhibent les `warning` du meme service
 - **Silencing** : possibilite de mettre en pause des alertes (maintenance planifiee)
@@ -38,8 +41,12 @@ Prometheus evalue les regles d'alerte (`rules/alerts.yml`), envoie les alertes a
 
 | Severite   | Canaux                     | Repeat interval |
 |------------|----------------------------|-----------------|
-| `critical` | Email + Mattermost         | 1 heure         |
-| `warning`  | Email                      | 4 heures        |
+| `critical` | Email + Mattermost         | `720h`          |
+| `warning`  | Email                      | `720h`          |
+
+Le `repeat_interval` est volontairement fixe tres haut (30 jours) : chaque
+alerte notifie **une fois quand elle se declenche et une fois quand elle se
+resout** (`send_resolved: true`), sans rappel periodique entre les deux.
 
 ## 2. Configuration
 
@@ -47,10 +54,11 @@ Prometheus evalue les regles d'alerte (`rules/alerts.yml`), envoie les alertes a
 
 | Parametre | Valeur |
 |-----------|--------|
-| Image | `prom/alertmanager:v0.27.0` |
+| Image | `prom/alertmanager:v0.33.0` |
 | Container | `common-alertmanager-ci` |
-| Port interne | `9093` |
+| Port interne | `9093` (aucun port hote) |
 | Reseau | `ci_network` + `monitoring_network` |
+| Secrets | `./alertmanager/secrets` monte en lecture seule sur `/etc/alertmanager/secrets` |
 
 ### Fichier de configuration
 
@@ -58,12 +66,19 @@ Chemin : `infrastructure/alertmanager/alertmanager.yml`
 
 Sections principales :
 
-- **global** : SMTP (smarthost, from, user, password)
+- **global** : SMTP (`smtp_smarthost`, `smtp_from`, `smtp_auth_username`), le
+  mot de passe etant lu depuis un **fichier monte**
+  (`smtp_auth_password_file: /etc/alertmanager/secrets/smtp_password`)
 - **route** : arbre de routage (default + child routes par severity)
 - **receivers** :
   - `default-receiver` : email warning
-  - `critical-receiver` : email + Mattermost
+  - `critical-receiver` : email + Mattermost (`slack_configs` avec
+    `api_url_file: /etc/alertmanager/secrets/mattermost_webhook`)
 - **inhibit_rules** : `critical` inhibe `warning` du meme `alertname`
+
+Aucun secret n'est en dur ni passe par variable d'environnement : les deux
+secrets sont des fichiers dans `infrastructure/alertmanager/secrets/`
+(non committes, avec un `.example` chacun comme modele).
 
 ### Parametres de groupement
 
@@ -72,7 +87,7 @@ Sections principales :
 | `group_by` | `[alertname, severity]` | Regroupe par nom et severite |
 | `group_wait` | `30s` | Delai d'attente avant premier envoi |
 | `group_interval` | `5m` | Delai entre alertes d'un meme groupe |
-| `repeat_interval` | `4h` (warning) / `1h` (critical) | Rappel si alerte active |
+| `repeat_interval` | `720h` (les deux severites) | Pas de rappel periodique : une notification au firing, une au resolved |
 
 ### Integration Prometheus
 
@@ -88,9 +103,14 @@ alerting:
 
 ### Notifications configurees
 
-**Email** : `devops@wk-archi-o24a-4-5-g1.fr` (destinataire), relai SMTP configure via `.env` (variables `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`).
+**Email** : le destinataire et l'expediteur sont fixes dans `alertmanager.yml`
+(`smtp_from` / `to`), le relai SMTP est `smtp.gmail.com:587`. Seul le mot de
+passe vient d'un fichier secret.
 
-**Mattermost** : webhook entrant vers le canal `devops-alerts`, URL configuree via `MATTERMOST_WEBHOOK_URL`.
+**Mattermost** : webhook entrant vers le canal `devops-alerts`, l'URL etant
+lue depuis `infrastructure/alertmanager/secrets/mattermost_webhook`.
+(A ne pas confondre avec `MATTERMOST_WEBHOOK_URL` du `.env`, qui alimente
+Jenkins et les scripts de backup, pas AlertManager.)
 
 ## 3. Mise en route
 
@@ -112,20 +132,31 @@ Sur Mattermost :
 3. Nom : `AlertManager Furious Ducks`
 4. Channel : `devops-alerts` (creer si besoin)
 5. Copier l'URL du webhook
-6. Coller dans `.env` :
+6. L'ecrire dans le fichier secret (jamais dans le `.env`, jamais committe) :
 
 ```bash
-MATTERMOST_WEBHOOK_URL=https://chat.example.com/hooks/abcdef1234567890
+cd /opt/furious-ducks/infrastructure
+cp alertmanager/secrets/mattermost_webhook.example alertmanager/secrets/mattermost_webhook
+printf '%s' 'https://chat.wk-archi-o24a-4-5-g1.fr/hooks/abcdef1234567890' \
+  > alertmanager/secrets/mattermost_webhook
+chmod 600 alertmanager/secrets/mattermost_webhook
 ```
 
-### 3.3 Configurer le SMTP dans `.env`
+### 3.3 Configurer le SMTP
+
+Le smarthost, l'expediteur et le destinataire sont dans
+`infrastructure/alertmanager/alertmanager.yml` (a editer directement). Seul le
+mot de passe est un secret monte :
 
 ```bash
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=ci-alerts@wk-archi-o24a-4-5-g1.fr
-SMTP_PASSWORD=<mot-de-passe-app-smtp>
+cd /opt/furious-ducks/infrastructure
+cp alertmanager/secrets/smtp_password.example alertmanager/secrets/smtp_password
+printf '%s' '<mot-de-passe-app-smtp>' > alertmanager/secrets/smtp_password
+chmod 600 alertmanager/secrets/smtp_password
 ```
+
+Les deux fichiers etant montes en lecture seule, tout changement demande un
+`docker compose -f docker-compose.monitoring.yml restart alertmanager`.
 
 ### 3.4 Demarrer la stack monitoring
 
@@ -185,8 +216,9 @@ docker exec common-alertmanager-ci amtool \
 docker exec common-alertmanager-ci amtool \
   --alertmanager.url=http://localhost:9093 alert
 
-# Ou via API
-curl -s http://localhost:9093/api/v2/alerts | jq
+# Ou via API, depuis un conteneur du meme reseau (le port 9093 n'est pas
+# publie sur l'hote)
+docker exec common-prometheus-ci wget -qO- http://common-alertmanager-ci:9093/api/v2/alerts
 ```
 
 ### 4.2 Creer un silence (maintenance planifiee)
@@ -231,25 +263,33 @@ Editer `infrastructure/prometheus/rules/alerts.yml` :
     description: "Espace libre : {{ $value }}%"
 ```
 
-Recharger Prometheus (sans redemarrer) :
+Recharger Prometheus (sans redemarrer). Le port 9090 n'est pas publie sur
+l'hote :
 
 ```bash
-curl -X POST http://localhost:9090/-/reload
+docker exec common-prometheus-ci wget --post-data='' -qO- http://localhost:9090/-/reload
 ```
 
 ### 4.4 Modifier la configuration AlertManager
 
-Editer `infrastructure/alertmanager/alertmanager.yml`, puis recharger :
+Editer `infrastructure/alertmanager/alertmanager.yml`. Verifier la syntaxe
+**avant** d'appliquer :
 
 ```bash
-curl -X POST http://localhost:9093/-/reload
+cd /opt/furious-ducks
+docker run --rm -v $(pwd)/infrastructure/alertmanager/alertmanager.yml:/tmp/a.yml \
+  prom/alertmanager:v0.33.0 amtool check-config /tmp/a.yml
 ```
 
-Verifier la syntaxe avant de recharger :
+Puis appliquer. Le fichier est monte en lecture seule et AlertManager n'est pas
+demarre avec `--web.enable-lifecycle` : un `SIGHUP` (ou un restart) est requis,
+et un restart est de toute facon necessaire si un fichier de `secrets/` a
+change.
 
 ```bash
-docker run --rm -v $(pwd)/infrastructure/alertmanager/alertmanager.yml:/tmp/a.yml \
-  prom/alertmanager:v0.27.0 amtool check-config /tmp/a.yml
+docker kill -s HUP common-alertmanager-ci
+# ou, plus sur :
+docker compose -f docker-compose.monitoring.yml restart alertmanager
 ```
 
 ### 4.5 Ajouter un canal de notification (ex : PagerDuty)
@@ -268,7 +308,7 @@ Puis router les alertes `severity=critical` vers ce receiver.
 ### 4.6 Deboguer une alerte non recue
 
 1. **Prometheus** : `/alerts` -> l'alerte est-elle en `Firing` ?
-2. **AlertManager** : l'alerte est-elle visible dans `/#/alerts` ?
+2. **AlertManager** : `amtool alert` (pas d'UI web : le service n'est pas expose)
 3. **Logs AlertManager** :
 
 ```bash
@@ -279,9 +319,10 @@ docker logs --tail 50 common-alertmanager-ci
 5. **Mattermost** : webhook encore valide ? Tester :
 
 ```bash
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"text":"Test"}' \
-  $MATTERMOST_WEBHOOK_URL
+docker exec common-alertmanager-ci sh -c \
+  'wget -qO- --post-data="{\"text\":\"Test\"}" \
+     --header="Content-Type: application/json" \
+     "$(cat /etc/alertmanager/secrets/mattermost_webhook)"'
 ```
 
 ### 4.7 Historique des notifications envoyees
@@ -314,7 +355,7 @@ Voir section 3.7.
 
 1. Envoyer une alerte test
 2. Attendre 30s (group_wait)
-3. Verifier la boite `devops@wk-archi-o24a-4-5-g1.fr`
+3. Verifier la boite du destinataire declare dans `alertmanager.yml`
 
 ### Verifier Mattermost
 
@@ -340,10 +381,10 @@ Declencher une `critical` + une `warning` avec meme `alertname` : seule la `crit
 | Symptome | Cause | Solution |
 |----------|-------|----------|
 | Aucune alerte recue | SMTP KO | `docker logs common-alertmanager-ci | grep -i smtp` |
-| `authentication failed` (SMTP) | Mauvais user/password | Revalider les credentials dans `.env` |
-| `connection refused` webhook Mattermost | URL incorrecte | Verifier `MATTERMOST_WEBHOOK_URL` |
+| `authentication failed` (SMTP) | Mauvais user/password | Revalider `smtp_auth_username` dans `alertmanager.yml` et le fichier `secrets/smtp_password` |
+| `connection refused` webhook Mattermost | URL incorrecte | Verifier `alertmanager/secrets/mattermost_webhook` |
 | Alertes en doublon | Mauvais `group_by` | Ajouter des labels communs dans `group_by` |
-| Alertes trop frequentes | `repeat_interval` trop court | Passer a 4h (warning) / 1h (critical) |
+| Alertes trop frequentes | `repeat_interval` trop court | Valeur actuelle : `720h` (aucun rappel periodique) |
 | Alertes jamais envoyees mais `Firing` | Mauvais routage | `amtool config show` pour verifier les routes |
 | `config reload failed` | Syntaxe YAML invalide | `amtool check-config` avant reload |
 | Silences disparaissent au restart | Volume non persistant | Verifier `alertmanager-data:/alertmanager` |

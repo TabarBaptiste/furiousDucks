@@ -44,9 +44,11 @@
 
 ### Politiques de retention
 
-- Garder les **10 dernieres versions** taguees par projet
-- Supprimer les images non taguees apres **7 jours**
-- Execution automatique des politiques de retention
+- Images de travail (`develop-*`, `main-*`) : garder les **10 plus recentes**
+- Images de release (`v*`) : **conservees indefiniment** (dependance de
+  `Promote Image` et de `scripts/rollback.sh`)
+- Supprimer les images non taguees apres **7 jours** (garbage collection)
+- Execution automatique des politiques de retention (detail en 3.9)
 
 ### Garbage collection
 
@@ -62,7 +64,8 @@
 - Traefik tourne et le DNS `registry.wk-archi-o24a-4-5-g1.fr` pointe vers le serveur.
 - Le serveur a au moins **8 Go de RAM libres** (Harbor est gourmand : Postgres, Redis, Trivy, registry).
 - Au moins **50 Go d'espace disque** libres (pour stocker les images).
-- Le reseau Docker `workflow-network` existe.
+- Les reseaux Docker `ci_network` (cree par le compose principal) et
+  `workflow-network` existent.
 
 ### 3.2 Installer Harbor
 
@@ -99,7 +102,12 @@ harbor_admin_password: <HARBOR_ADMIN_PASSWORD du .env>
 database:
   password: <HARBOR_DB_PASSWORD du .env>
 
-data_volume: /data/harbor
+# Chemin des donnees Harbor sur l'hote. Garder le defaut officiel de
+# l'installeur Harbor (/data) : la stack de backup bind-monte /data en entier
+# (voir docker-compose.backup.yml et backup-harbor.sh) pour couvrir n'importe
+# quel data_volume place sous cette arborescence, sans configuration
+# supplementaire.
+data_volume: /data
 
 # Stockage des images
 trivy:
@@ -164,30 +172,22 @@ Pour que Prometheus (job `harbor` dans `infrastructure/prometheus/prometheus.yml
 ```yaml
 metric:
   enabled: true
-  port: 8001
+  port: 9090
   path: /metrics
 ```
 
-2. Attache le service `core` au reseau `ci_network` dans `/opt/harbor/docker-compose.yml` (meme principe que pour `proxy` en 3.3), afin que Prometheus (sur `ci_network`) puisse resoudre `harbor-core:8001` :
+2. Le nginx de Harbor (service `proxy`, **container_name `nginx`** — convention
+   Harbor, pas `harbor-nginx`) agrege les metriques des composants internes
+   (core, jobservice, registry, exporter) sur le port **9090**. C'est ce
+   conteneur que Prometheus scrape ; il est deja rattache a `ci_network` par
+   l'etape 3.3. **Ne publie pas 9090 sur l'hote** : commente aussi
+   `- 9090:9090` dans la section `ports:` du service `proxy`, au meme titre que
+   `- 80:8080`.
 
-```yaml
-services:
-  core:
-    # ... config existante ...
-    networks:
-      - harbor
-      - ci_network      # AJOUTER
+   La cible correspondante dans `infrastructure/prometheus/prometheus.yml`
+   (job `harbor`) est donc `nginx:9090`.
 
-networks:
-  ci_network:
-    external: true
-```
-
-3. Redemarre Harbor : `docker-compose -f docker-compose.yml up -d`.
-
-Tant que ces deux etapes ne sont pas faites, la cible `harbor-core:8001` remonte "down" dans Prometheus — c'est attendu si Harbor n'est pas encore deploye.
-
-Redemarre Harbor :
+3. Redemarre Harbor :
 
 ```bash
 cd /opt/harbor
@@ -195,14 +195,22 @@ sudo docker compose down
 sudo docker compose up -d
 ```
 
-### 3.4 Premier login
+Tant que ces etapes ne sont pas faites, la cible `nginx:9090` remonte "down"
+dans Prometheus — c'est attendu si Harbor n'est pas encore deploye.
+
+> **Attention** : re-executer `./prepare` (par exemple apres avoir modifie
+> `harbor.yml`) **regenere `docker-compose.yml` de zero** et efface les
+> modifications de 3.3 et 3.4. Il faut les re-appliquer puis relancer
+> `docker compose up -d` a chaque fois.
+
+### 3.5 Premier login
 
 1. Ouvre `https://registry.wk-archi-o24a-4-5-g1.fr`
 2. User : `admin`
 3. Password : `HARBOR_ADMIN_PASSWORD` du `.env`
 4. Change le mot de passe via **Profile > Change Password**
 
-### 3.5 Creer un projet Harbor
+### 3.6 Creer un projet Harbor
 
 Un "projet Harbor" = un namespace pour tes images.
 
@@ -212,7 +220,7 @@ Un "projet Harbor" = un namespace pour tes images.
 4. Storage Quota : Unlimited (ou definir une quota)
 5. **OK**
 
-### 3.6 Tester un push depuis le serveur
+### 3.7 Tester un push depuis le serveur
 
 ```bash
 # Login
@@ -229,13 +237,13 @@ docker push registry.wk-archi-o24a-4-5-g1.fr/furious-ducks/test:1.0.0
 # Verifier dans l'UI Harbor : projet "furious-ducks" > image "test" > tag "1.0.0"
 ```
 
-### 3.7 Configurer le scan de vulnerabilites
+### 3.8 Configurer le scan de vulnerabilites
 
 1. **Configuration > Vulnerability** : coche "Scan all images automatically when pushed"
 2. Schedule : Daily (re-scan quotidien pour detecter nouvelles CVE)
 3. **Save**
 
-### 3.8 Configurer la politique de retention
+### 3.9 Configurer la politique de retention
 
 Deux regles complementaires, a creer dans cet ordre. Harbor evalue toutes les
 regles et **conserve une image des qu'au moins une regle la retient** : la regle
@@ -261,7 +269,7 @@ regles et **conserve une image des qu'au moins une regle la retient** : la regle
 
 Sur la meme page, activer **"allow deletion of untagged artifacts"** : les
 images orphelines (laissees par un retag) sont alors purgees. Le CST fixe ce
-delai a 7 jours, applique par la garbage collection planifiee (voir 3.8 bis).
+delai a 7 jours, applique par la garbage collection planifiee (voir 3.10).
 
 **Planification**
 
@@ -279,18 +287,18 @@ du superflu (justification CST 7.5).
 > (CST 2.4 : "la meme image construite une fois peut etre reutilisee a
 > l'identique a travers les environnements sans reconstruction").
 
-### 3.8 bis Configurer la garbage collection
+### 3.10 Configurer la garbage collection
 
 La politique de retention **supprime les references** aux images ; la garbage
 collection **libere reellement l'espace disque** des couches devenues
-orphelines. Sans elle, `/data/harbor` continue de grossir malgre la retention.
+orphelines. Sans elle, `/data` continue de grossir malgre la retention.
 
 1. **Administration > Garbage Collection**
 2. Cocher **"Delete Untagged Artifacts"**
 3. Schedule : **Weekly (Sunday 03:00)** - apres la politique de retention de 02:00
 4. **Save**
 
-### 3.9 Configurer le compte Jenkins
+### 3.11 Configurer le compte Jenkins
 
 Cree un user dedie pour Jenkins (mieux que d'utiliser admin) :
 
@@ -343,11 +351,20 @@ docker pull registry.wk-archi-o24a-4-5-g1.fr/furious-ducks/thetiptop:v1.2.3
 
 ### 4.6 Sauvegarder Harbor
 
-Harbor stocke ses donnees dans `/data/harbor` (configurable via `data_volume` dans `harbor.yml`).
+Harbor stocke ses donnees dans `/data` (defaut officiel de l'installeur,
+configurable via `data_volume` dans `harbor.yml`) : `registry/`, `database/`,
+`redis/`, `job_logs/`, `secret/`, `trivy-adapter/`, `ca_download/`.
 
 **Sauvegarde automatique** : `backup-harbor.sh` (stack `docker-compose.backup.yml`) monte ce chemin en lecture seule dans le conteneur `backup-manager` et sauvegarde via Restic vers MinIO chaque dimanche a 01h00 (avant le backup quotidien general et la verification d'integrite hebdomadaire). Voir CST section "7.5 Pourquoi un backup hebdomadaire pour Harbor plutot que quotidien ?".
 
-**Important** : si le chemin `data_volume` de `harbor.yml` differe de `/data/harbor`, mettre a jour le bind mount correspondant dans `docker-compose.backup.yml` (service `backup-manager`).
+**Important** : `docker-compose.backup.yml` bind-monte `/data` en entier — pas
+seulement un sous-repertoire — c'est ce qui permet de couvrir n'importe quel
+`data_volume` place sous cette arborescence. Si `data_volume` sort de `/data`
+(chemin custom), il faut mettre a jour ce bind mount (service `backup-manager`).
+
+**Limite connue** : `/data/database/` est un repertoire de donnees
+PostgreSQL **vivant**. La sauvegarde est donc une copie a chaud ; pour une
+restauration Harbor pleinement coherente, arreter Harbor avant le backup.
 
 **Backup manuel ponctuel** (hors planification automatique) :
 
@@ -411,7 +428,7 @@ Resultat attendu : push et pull reussis sans erreur.
 ### Verifier les politiques de retention
 
 1. Naviguer vers **Projects > (nom du projet) > Configuration > Tag Retention**
-2. Verifier la presence des **deux** regles (voir 3.8) :
+2. Verifier la presence des **deux** regles (voir 3.9) :
    - `develop-*,main-*` > retain the most recent 10 tags
    - `v*` > retain always
 3. Verifier que **"allow deletion of untagged artifacts"** est coche

@@ -5,8 +5,10 @@
 - **Role** : Plateforme de visualisation des metriques et des logs
 - **Datasources** : Prometheus (PromQL) et Loki (LogQL)
 - **Port** : 3000 (via Traefik)
-- **Sous-domaine** : `monitor.wk-archi-o24a-4-5-g1.fr`
-- **Dashboards standardises** : Node Monitoring, Docker Monitoring, CI/CD Monitoring
+- **Sous-domaine** : `monitor.wk-archi-o24a-4-5-g1.fr` (alias :
+  `grafana.wk-archi-o24a-4-5-g1.fr`, meme service Traefik)
+- **Dashboards standardises** : Node Monitoring, Docker Monitoring,
+  CI/CD Monitoring, DORA Metrics
 - **Alerting integre** (complementaire a AlertManager)
 
 ### Architecture
@@ -30,7 +32,7 @@ Prometheus -(PromQL)-> Grafana <-(LogQL)- Loki
 | Image           | `grafana/grafana:13.1.0` |
 | Container       | `common-grafana-ci`     |
 | Port interne    | 3000                    |
-| Reseau Docker   | `ci-network`            |
+| Reseau Docker   | `ci_network` + `monitoring_network` |
 
 ### Provisioning automatique
 
@@ -39,10 +41,12 @@ infrastructure/grafana/provisioning/
 |-- datasources/
 |   `-- datasources.yml        # Prometheus + Loki
 `-- dashboards/
-    |-- dashboards.yml          # Configuration du provider
-    |-- node-monitoring.json
-    |-- docker-monitoring.json
-    `-- cicd-monitoring.json
+    |-- dashboards.yml          # Provider (dossier "Furious Ducks")
+    `-- json/                   # options.path du provider
+        |-- node-monitoring.json
+        |-- docker-monitoring.json
+        |-- cicd-monitoring.json
+        `-- dora-metrics.json
 ```
 
 ### Dashboards preconfigures
@@ -52,6 +56,7 @@ infrastructure/grafana/provisioning/
 | Node Monitoring    | Metriques systeme : CPU, memoire, disque, reseau        |
 | Docker Monitoring  | Etat des conteneurs, consommation ressources par service |
 | CI/CD Monitoring   | Statistiques pipelines Jenkins, durees, taux de succes  |
+| DORA Metrics       | Deployment frequency, lead time, change failure rate, MTTR (alimente par `infrastructure/dora/`, via textfiles node-exporter) |
 
 ### Variables d'environnement
 
@@ -106,6 +111,7 @@ Si erreur :
    - Node Monitoring
    - Docker Monitoring
    - CI/CD Monitoring
+   - DORA Metrics
 3. Ouvre chaque dashboard : tu dois voir des donnees (CPU, memoire, conteneurs, requetes Traefik)
 
 Si les panels affichent "No data" :
@@ -208,6 +214,7 @@ Le volume `common-grafana-data-ci` est preserve (dashboards custom, users, alert
 ```bash
 curl -f https://monitor.wk-archi-o24a-4-5-g1.fr/api/health
 # Reponse attendue : {"commit":"...","database":"ok","version":"13.1.0"}
+# (la version doit correspondre au tag de l'image dans docker-compose.monitoring.yml)
 ```
 
 ### Verification des datasources
@@ -220,7 +227,7 @@ curl -f https://monitor.wk-archi-o24a-4-5-g1.fr/api/health
 ### Verification des dashboards
 
 1. Aller dans **Dashboard > Browse > Furious Ducks**
-2. Verifier la presence des 3 dashboards : Node, Docker, CI/CD Monitoring
+2. Verifier la presence des 4 dashboards : Node, Docker, CI/CD Monitoring, DORA Metrics
 3. Ouvrir chaque dashboard et verifier que les panneaux affichent des donnees
 
 ### Test d'alerting
@@ -243,7 +250,7 @@ curl -f https://monitor.wk-archi-o24a-4-5-g1.fr/api/health
 docker ps --filter name=common-grafana-ci
 docker logs common-grafana-ci --tail 50
 docker exec common-grafana-ci ls /etc/grafana/provisioning/datasources/
-docker exec common-grafana-ci ls /etc/grafana/provisioning/dashboards/
+docker exec common-grafana-ci ls /etc/grafana/provisioning/dashboards/json/
 ```
 
 ## 6. Depannage

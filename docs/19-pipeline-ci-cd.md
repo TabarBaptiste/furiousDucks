@@ -44,7 +44,7 @@ evite que ces deux ecritures divergent avec le temps.
 | Run Prisma Migrations | non | oui | oui | oui |
 | Deploy DEV (+ API) | non | oui | non | non |
 | Deploy PREPROD (+ API) | non | non | oui | non |
-| E2E Tests (Cypress) | non | non | oui | non |
+| E2E Tests (Playwright/Cypress) | non | non | oui | non |
 | OWASP ZAP | non | non | oui (si `runZap`) | non |
 | Approval PROD | non | non | non | oui |
 | Deploy PROD (+ API), Blue/Green | non | non | non | oui |
@@ -127,9 +127,11 @@ dizaines de secondes) au regard du risque evite.
 
 ### 3.8 Validation post-deploiement (preprod uniquement)
 
-- **E2E Tests (Cypress), OWASP ZAP** : contre PREPROD deploye, avant la
+- **E2E Tests, OWASP ZAP** : contre PREPROD deploye, avant la
   promotion vers PROD - c'est le dernier point ou un defaut fonctionnel ou une
-  mauvaise configuration de securite peut encore bloquer une release.
+  mauvaise configuration de securite peut encore bloquer une release. Le
+  framework E2E est **Playwright par defaut** (`e2eFramework: 'playwright'`) ;
+  un projet peut basculer sur Cypress via ce meme parametre.
 
 ## 4. Stages retires ou deplaces (hors matrice)
 
@@ -178,7 +180,7 @@ disque Jenkins.
 
 ### 5.3 Retention Harbor
 
-Detaillee dans `04-harbor.md` (sections 3.8 et 3.8 bis). Resume :
+Detaillee dans `04-harbor.md` (sections 3.9 et 3.10). Resume :
 
 - Images `develop-*`/`main-*` : 10 plus recentes conservees.
 - Images `v*` (releases) : conservees indefiniment - dependance directe de

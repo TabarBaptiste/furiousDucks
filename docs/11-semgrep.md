@@ -45,7 +45,14 @@ Semgrep detecte des patterns de code vulnerables avec des regles declaratives : 
 
 ### Execution dans le pipeline
 
-Semgrep est execute via `docker run` dans le Jenkinsfile, uniquement sur la branche `main` (avant promotion en PREPROD). Voir `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy`.
+Semgrep est execute via `docker run semgrep/semgrep:1.175.0` par la shared
+library, sur les branches qui produisent ou promeuvent un artefact : `main`
+(PREPROD) et les tags `vX.Y.Z` (PROD). Il ne tourne ni sur `develop` (deja
+couvert par SonarQube) ni sur `feature/*`. Le stage est place **avant**
+`Docker Build`, la ou il peut encore bloquer la construction. Un resultat non
+vide passe le build en `UNSTABLE` (il ne l'arrete pas). Voir
+`infrastructure/jenkins/shared-library/vars/ciPipeline.groovy` et la matrice de
+`19-pipeline-ci-cd.md`.
 
 ### Commandes type
 
@@ -87,7 +94,7 @@ Semgrep ne necessite **aucune installation manuelle** : il est execute via `dock
 Pour eviter le pull au premier build :
 
 ```bash
-docker pull semgrep/semgrep:latest
+docker pull semgrep/semgrep:1.175.0   # image utilisee par ciPipeline.groovy
 ```
 
 ### 3.3 Premier scan de test en local
@@ -96,7 +103,7 @@ Sur un projet clone localement :
 
 ```bash
 cd /chemin/vers/projet
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config auto /src
 ```
 
@@ -115,7 +122,7 @@ $query = "SELECT * FROM users WHERE name = '$user'";
 mysqli_query($conn, $query);
 EOF
 
-docker run --rm -v /tmp/semgrep-test:/src semgrep/semgrep \
+docker run --rm -v /tmp/semgrep-test:/src semgrep/semgrep:1.175.0 \
   semgrep scan --config auto /src
 ```
 
@@ -159,7 +166,7 @@ grep -A 15 "Semgrep SAST" \
 
 ```bash
 cd /chemin/vers/projet
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config auto /src
 ```
 
@@ -169,21 +176,21 @@ docker run --rm -v $(pwd):/src semgrep/semgrep \
 # Liste des fichiers modifies dans la branche courante
 CHANGED_FILES=$(git diff --name-only main...HEAD)
 
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config auto $CHANGED_FILES
 ```
 
 ### 4.3 Generer un rapport lisible pour la relecture
 
 ```bash
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config auto --output /src/semgrep.txt /src
 ```
 
 ### 4.4 Exclure un repertoire (node_modules, vendor)
 
 ```bash
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config auto \
     --exclude vendor \
     --exclude node_modules \
@@ -202,7 +209,7 @@ eval(user_input)  # Utilise dans un contexte sandbox
 ### 4.6 Utiliser un ruleset specifique pour audit OWASP
 
 ```bash
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config p/owasp-top-ten /src
 ```
 
@@ -224,14 +231,14 @@ jq '.results[] | {file: .path, rule: .check_id, msg: .extra.message}' \
 ### Scan d'un projet
 
 ```bash
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config auto /src
 ```
 
 ### Scan avec ruleset OWASP
 
 ```bash
-docker run --rm -v $(pwd):/src semgrep/semgrep \
+docker run --rm -v $(pwd):/src semgrep/semgrep:1.175.0 \
   semgrep scan --config p/owasp-top-ten /src
 ```
 

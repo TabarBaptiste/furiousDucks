@@ -131,8 +131,11 @@ loki.write "local" {
 | Label | Exemple | Source |
 |-------|---------|--------|
 | `job` | `docker` / `syslog` | Defini dans la config |
-| `container_name` | `common-jenkins-ci` | Relabel depuis `__meta_docker_container_name` |
-| `host` | nom de la machine | Auto |
+| `container_name` | `common-jenkins-ci` | Relabel depuis `__meta_docker_container_name` (flux `docker` uniquement) |
+
+Ce sont les deux seuls labels produits par la configuration actuelle. Pour en
+ajouter (`compose_service`, `host`, ...), completer le bloc
+`discovery.relabel` - voir section 4.3.
 
 ## 3. Mise en route
 

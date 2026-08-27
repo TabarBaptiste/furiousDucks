@@ -8,8 +8,10 @@
 - **Pas de sous-domaine**
 - **Configuration par labels Docker** (declarative, versionnee dans le compose)
 - **Leger** : image < 20 Mo, tres peu de ressources
-- **Gere 3 jobs** : backup quotidien, verification hebdomadaire, retention mensuelle
-- **Execution via `docker exec`** sur le conteneur `common-backup-manager-ci`
+- **Gere 5 jobs** : backup Harbor hebdomadaire, backup quotidien, verification
+  hebdomadaire, retention mensuelle, metriques DORA quotidiennes
+- **Execution via `docker exec`** sur `common-backup-manager-ci` (backups) et
+  `common-dora-metrics-ci` (metriques DORA)
 
 ### Architecture
 
@@ -21,7 +23,8 @@
 +-----------------+        +--------------------+        |             |
         |                                                |             |
         | declenche a l'heure prevue                     |             |
-        | (02:00 / dimanche 03:00 / 1er 04:00)           |             |
+        | (dim 01:00 / 02:00 / dim 03:00 /                |             |
+        |  1er 04:00 / 06:00)                            |             |
         v                                                |             |
 +-----------------------------+                          |   MinIO     |
 | docker exec                 |                          |   (S3)      |
@@ -36,7 +39,7 @@ Ofelia surveille le socket Docker, lit les labels `ofelia.job-exec.*` sur les co
 
 | Type | Description | Utilise ici ? |
 |------|-------------|---------------|
-| `job-exec` | Execute une commande dans un conteneur deja demarre | Oui (nos 3 jobs) |
+| `job-exec` | Execute une commande dans un conteneur deja demarre | Oui (nos 5 jobs) |
 | `job-run` | Lance un conteneur pour executer la commande | Non |
 | `job-local` | Execute une commande sur l'hote | Non |
 | `job-service-run` | Execute dans un service Swarm | Non |
@@ -47,7 +50,7 @@ Ofelia surveille le socket Docker, lit les labels `ofelia.job-exec.*` sur les co
 
 | Parametre | Valeur |
 |-----------|--------|
-| Image | `mcuadros/ofelia:v0.3.12` |
+| Image | `mcuadros/ofelia:v0.3.22` |
 | Container | `common-ofelia-ci` |
 | Volume | `/var/run/docker.sock:ro` (lecture seule) |
 | Reseau | `backup_network` |
@@ -58,6 +61,11 @@ Dans `infrastructure/docker-compose.backup.yml`, sur le service `ofelia` :
 
 ```yaml
 labels:
+  # Backup du registre Harbor, dimanche a 01:00
+  - "ofelia.job-exec.backup-harbor-weekly.schedule=0 0 1 * * 0"
+  - "ofelia.job-exec.backup-harbor-weekly.container=common-backup-manager-ci"
+  - "ofelia.job-exec.backup-harbor-weekly.command=/scripts/backup-harbor.sh"
+
   # Backup quotidien a 02:00
   - "ofelia.job-exec.backup-daily.schedule=0 0 2 * * *"
   - "ofelia.job-exec.backup-daily.container=common-backup-manager-ci"
@@ -72,6 +80,11 @@ labels:
   - "ofelia.job-exec.retention-monthly.schedule=0 0 4 1 * *"
   - "ofelia.job-exec.retention-monthly.container=common-backup-manager-ci"
   - "ofelia.job-exec.retention-monthly.command=/scripts/retention.sh"
+
+  # Metriques DORA quotidiennes a 06:00 (autre conteneur cible)
+  - "ofelia.job-exec.dora-metrics-daily.schedule=0 0 6 * * *"
+  - "ofelia.job-exec.dora-metrics-daily.container=common-dora-metrics-ci"
+  - "ofelia.job-exec.dora-metrics-daily.command=/scripts/dora_metrics.py"
 ```
 
 ### Syntaxe Cron Ofelia (6 champs)
@@ -93,13 +106,19 @@ Attention : Ofelia utilise le format Go (6 champs, incluant les secondes) :
 
 Le 6eme champ (jour semaine) suit la convention Go : **0=dimanche**, 1=lundi, ..., 6=samedi.
 
-### Planification des 3 jobs
+### Planification des 5 jobs
 
-| Job | Cron (Ofelia) | Frequence | Script execute |
-|-----|---------------|-----------|----------------|
-| `backup-daily` | `0 0 2 * * *` | Quotidien 02:00 | `/scripts/backup-all.sh` |
-| `verify-weekly` | `0 0 3 * * 0` | Dimanche 03:00 | `/scripts/verify-integrity.sh` |
-| `retention-monthly` | `0 0 4 1 * *` | 1er du mois 04:00 | `/scripts/retention.sh` |
+| Job | Cron (Ofelia) | Frequence | Conteneur cible | Script execute |
+|-----|---------------|-----------|-----------------|----------------|
+| `backup-harbor-weekly` | `0 0 1 * * 0` | Dimanche 01:00 | `common-backup-manager-ci` | `/scripts/backup-harbor.sh` |
+| `backup-daily` | `0 0 2 * * *` | Quotidien 02:00 | `common-backup-manager-ci` | `/scripts/backup-all.sh` |
+| `verify-weekly` | `0 0 3 * * 0` | Dimanche 03:00 | `common-backup-manager-ci` | `/scripts/verify-integrity.sh` |
+| `retention-monthly` | `0 0 4 1 * *` | 1er du mois 04:00 | `common-backup-manager-ci` | `/scripts/retention.sh` |
+| `dora-metrics-daily` | `0 0 6 * * *` | Quotidien 06:00 | `common-dora-metrics-ci` | `/scripts/dora_metrics.py` |
+
+L'ordre du dimanche est voulu : backup Harbor (01:00) -> backup quotidien
+(02:00) -> verification d'integrite (03:00), de sorte que le `restic check`
+porte sur des snapshots deja ecrits.
 
 ### Role du socket Docker
 
@@ -114,8 +133,11 @@ Ofelia est demarre automatiquement avec la stack backup.
 ### 3.1 Prerequis
 
 - Stack backup demarree (`docker-compose.backup.yml up -d`)
-- Conteneur `common-backup-manager-ci` en etat `running`
-- Scripts de backup (`backup-all.sh`, `verify-integrity.sh`, `retention.sh`) presents dans `/scripts/` du conteneur backup-manager
+- Conteneurs `common-backup-manager-ci` **et** `common-dora-metrics-ci`
+  (stack monitoring) en etat `running`
+- Scripts de backup (`backup-harbor.sh`, `backup-all.sh`,
+  `verify-integrity.sh`, `retention.sh`) presents dans `/scripts/` du conteneur
+  backup-manager
 - Bucket MinIO `furious-ducks-backups` cree
 
 ### 3.2 Verifier qu'Ofelia est demarre
@@ -129,14 +151,16 @@ docker ps --filter name=common-ofelia-ci
 
 ```bash
 docker logs common-ofelia-ci 2>&1 | grep -E "(New job registered|Parsed)"
-# Doit lister les 3 jobs : backup-daily, verify-weekly, retention-monthly
+# Doit lister les 5 jobs
 ```
 
 Sortie attendue du type :
 ```
+[Jobs] New job registered "backup-harbor-weekly"
 [Jobs] New job registered "backup-daily"
 [Jobs] New job registered "verify-weekly"
 [Jobs] New job registered "retention-monthly"
+[Jobs] New job registered "dora-metrics-daily"
 ```
 
 ### 3.4 Declencher un job manuellement (test)
@@ -162,7 +186,7 @@ docker logs common-ofelia-ci 2>&1 | grep -i "next"
 docker inspect common-ofelia-ci | jq '.[0].Config.Labels' | grep ofelia
 ```
 
-Tu dois voir les 3 jobs avec leur schedule, container et command.
+Tu dois voir les 5 jobs avec leur schedule, container et command.
 
 ### 3.7 Ajuster un horaire (optionnel)
 
@@ -284,7 +308,7 @@ docker ps --filter name=common-ofelia-ci --filter status=running
 
 ```bash
 docker logs common-ofelia-ci 2>&1 | grep "New job registered" | wc -l
-# Doit retourner 3
+# Doit retourner 5
 ```
 
 ### Declenchement manuel d'un backup

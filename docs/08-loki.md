@@ -5,9 +5,10 @@
 - **Role** : Systeme d'agregation de logs, integre a l'ecosysteme Grafana
 - **Collecte** : Logs de tous les conteneurs Docker et du systeme
 - **Port** : 3100 (interne uniquement, pas d'exposition externe)
-- **Pas de sous-domaine** (service interne)
+- **Pas de sous-domaine** (service interne, `traefik.enable=false`)
 - **Interrogation** : Via LogQL dans Grafana
-- **Retention** : 30 jours
+- **Retention** : **90 jours** (`retention_period: 2160h`), conformement a
+  l'exigence CST de conservation des logs d'audit >= 90 jours
 - **Leger et adapte** a l'echelle de l'agence (alternative plus legere qu'ELK)
 
 ### Architecture
@@ -31,29 +32,30 @@ Loki n'indexe que les **labels** (metadonnees) et non le contenu des logs : c'es
 |-----------------|------------------------|
 | Image           | `grafana/loki:3.7.3`   |
 | Container       | `common-loki-ci`       |
-| Port interne    | 3100                   |
-| Reseau Docker   | `ci-network`           |
+| Port interne    | 3100 (HTTP), 9095 (gRPC) |
+| Reseau Docker   | `ci_network` + `monitoring_network` |
 
 ### Fichier de configuration
 
 `infrastructure/loki/loki-config.yml` :
-- Mode single-tenant (pas d'authentification)
+- Mode single-tenant (`auth_enabled: false`)
 - Schema TSDB v13, index par 24h
 - Stockage filesystem local (`/loki/chunks`, `/loki/rules`, `/loki/compactor`)
-- Retention : 720h (30 jours), nettoyage automatique par le compacteur
-- Rejet des samples plus vieux que 7 jours
+- Retention : `2160h` (90 jours), `max_query_length: 2161h`, nettoyage
+  automatique par le **compacteur** (`retention_enabled: true`)
+- Rejet des samples plus vieux que 7 jours (`reject_old_samples_max_age: 168h`)
 
 ### Structure de stockage
 
 ```
 /loki/
-|-- chunks/          # Donnees compressees
+|-- chunks/          # Donnees compressees + index TSDB
 |-- rules/
-|-- boltdb-shipper/  # Index BoltDB
-|   |-- active/
-|   `-- cache/
-`-- compactor/
+`-- compactor/       # Espace de travail du compacteur (retention)
 ```
+
+(Il n'y a plus de repertoire `boltdb-shipper/` : le schema en vigueur est
+`tsdb` depuis `2024-01-01`.)
 
 ### Integration avec Grafana
 
@@ -64,9 +66,12 @@ Loki est automatiquement provisionne comme datasource dans Grafana via `infrastr
 | Label             | Description                   |
 |-------------------|-------------------------------|
 | `job`             | Source du log (`docker`, `syslog`) |
-| `container_name`  | Nom du conteneur Docker       |
-| `compose_service` | Nom du service Docker Compose |
-| `host`            | Nom de l'hote                 |
+| `container_name`  | Nom du conteneur Docker (flux `docker` uniquement) |
+
+Ce sont les **seuls** labels produits par la configuration Alloy actuelle
+(`infrastructure/alloy/config.alloy`). Pour en ajouter (ex. `compose_service`
+depuis `__meta_docker_container_label_com_docker_compose_service`), il faut
+completer le bloc `discovery.relabel` - voir `16-alloy.md` section 4.3.
 
 ## 3. Mise en route
 
@@ -112,14 +117,22 @@ Si **aucune log n'apparait** :
 
 ### 3.5 (Optionnel) Configurer la duree de retention
 
-La retention par defaut est 30 jours. Pour modifier, edite `infrastructure/loki/loki-config.yml` :
+La retention configuree est de **90 jours**. Le `table_manager` est deprecie et
+**supprime en Loki 3.x** : la retention se regle dans `limits_config` et est
+appliquee par le `compactor`. Pour modifier, edite
+`infrastructure/loki/loki-config.yml` :
 
 ```yaml
-table_manager:
-  retention_period: 1440h   # 60 jours
 limits_config:
-  max_query_length: 1441h
+  retention_period: 1440h   # 60 jours
+  max_query_length: 1441h   # garder >= retention_period
+
+compactor:
+  retention_enabled: true   # doit rester actif, sinon rien n'est purge
 ```
+
+Attention : reduire la retention sous 90 jours sort du cadre CST (conservation
+des logs d'audit).
 
 Puis :
 
@@ -189,7 +202,10 @@ docker compose -f docker-compose.monitoring.yml pull loki
 docker compose -f docker-compose.monitoring.yml up -d loki
 ```
 
-**Attention** : verifier la compatibilite de schema (boltdb-shipper deprecated > tsdb depuis Loki 2.8). Le schema_config peut necessiter une migration manuelle.
+**Attention** : verifier la compatibilite de schema avant tout saut de version.
+La configuration est deja en `tsdb`/`v13` ; c'est le passage a un futur schema
+qui necessiterait d'ajouter une nouvelle entree datee dans `schema_config`
+(sans jamais modifier les entrees existantes).
 
 ## 5. Tests de validation
 

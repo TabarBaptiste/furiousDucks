@@ -7,7 +7,10 @@
 - **Role** : Moteur de backup incremental, chiffre (AES-256) et deduplique
 - **Fonctionnement** : Mode CLI dans le conteneur `backup-manager`
 - **Pas de port expose**
-- **Sauvegarde tous les volumes critiques** : GitLab, Jenkins, Prometheus, Grafana, SonarQube
+- **Sauvegarde tous les volumes critiques** : GitLab (config + data), Jenkins,
+  Prometheus, Grafana, SonarQube (data + BDD), Mattermost (data + config),
+  plus les **dumps logiques `pg_dump`** des BDD SonarQube et Mattermost, et le
+  repertoire de donnees **Harbor** (`/data`, sauvegarde hebdomadaire dediee)
 
 ### MinIO
 
@@ -20,11 +23,14 @@
 
 ### Politique de sauvegarde
 
-| Type            | Frequence                    | Retention   |
-|-----------------|------------------------------|-------------|
-| **Quotidienne** | Tous les jours a 02h00       | 14 jours    |
-| **Hebdomadaire**| Chaque dimanche              | 8 semaines  |
-| **Mensuelle**   | 1er de chaque mois           | 12 mois     |
+Politique appliquee par `retention.sh` (`restic forget --group-by paths`) :
+
+| Politique restic | Valeur |
+|------------------|--------|
+| `--keep-daily`   | 7      |
+| `--keep-weekly`  | 4      |
+| `--keep-monthly` | 6      |
+| `--keep-yearly`  | 2      |
 
 **Principe 3-2-1** :
 - **3** copies des donnees (volumes Docker + snapshot local + MinIO)
@@ -33,11 +39,13 @@
 
 **Taches planifiees (via Ofelia)** :
 
-| Tache                      | Planification           |
-|----------------------------|-------------------------|
-| Sauvegarde quotidienne     | Tous les jours a 02h00  |
-| Verification d'integrite   | Dimanche a 03h00        |
-| Nettoyage / retention      | 1er du mois a 04h00     |
+| Tache                          | Planification            | Script |
+|--------------------------------|--------------------------|--------|
+| Sauvegarde Harbor (registre)   | Dimanche a 01h00         | `backup-harbor.sh` |
+| Sauvegarde quotidienne         | Tous les jours a 02h00   | `backup-all.sh` |
+| Verification d'integrite       | Dimanche a 03h00         | `verify-integrity.sh` |
+| Nettoyage / retention          | 1er du mois a 04h00      | `retention.sh` |
+| Metriques DORA (hors backup)   | Tous les jours a 06h00   | `dora_metrics.py` (conteneur `common-dora-metrics-ci`) |
 
 ## 2. Configuration
 
@@ -45,9 +53,10 @@
 
 | Parametre       | Valeur                                  |
 |-----------------|-----------------------------------------|
-| Image           | Custom (voir `infrastructure/backup/Dockerfile`) |
+| Image           | Custom, base `restic/restic:0.17.0` (voir `infrastructure/backup/Dockerfile`) |
 | Container       | `common-backup-manager-ci`              |
-| Reseau Docker   | `ci-network`, `backup_network`          |
+| Hostname        | `backup-manager` (fige : restic tague les snapshots avec, et `retention.sh --group-by` en depend) |
+| Reseau Docker   | `ci_network` (pour `pg_dump`), `backup_network` |
 
 ### Scripts de sauvegarde
 
@@ -55,7 +64,8 @@
 infrastructure/backup/
 |-- Dockerfile
 `-- scripts/
-    |-- backup-all.sh
+    |-- backup-all.sh          # sauvegarde quotidienne (volumes + dumps SQL)
+    |-- backup-harbor.sh       # sauvegarde hebdomadaire du registre Harbor
     |-- verify-integrity.sh
     |-- retention.sh
     `-- restore.sh
@@ -65,7 +75,7 @@ infrastructure/backup/
 
 | Parametre       | Valeur                     |
 |-----------------|----------------------------|
-| Image           | `minio/minio`              |
+| Image           | `minio/minio:RELEASE.2024-09-13T20-26-02Z` |
 | Volume          | `minio-data`               |
 | Port API        | 9000                       |
 | Port Console    | 9001                       |
@@ -78,6 +88,8 @@ infrastructure/backup/
 | `RESTIC_PASSWORD`    | Mot de passe de chiffrement AES-256            |
 | `AWS_ACCESS_KEY_ID`  | Cle d'acces MinIO                              |
 | `AWS_SECRET_ACCESS_KEY` | Cle secrete MinIO                           |
+| `WEBHOOK_URL`        | Webhook Mattermost utilise par `notify_failure()` des scripts |
+| `SONARQUBE_DB_*` / `MATTERMOST_DB_*` | Hote/user/base/mot de passe pour les `pg_dump` logiques |
 
 ### Chiffrement
 
@@ -105,7 +117,7 @@ docker compose -f docker-compose.backup.yml up -d
 Cela demarre **3 conteneurs** :
 - `common-minio-ci` (stockage)
 - `common-backup-manager-ci` (Restic + scripts)
-- `common-ofelia-ci` (scheduler)
+- `common-ofelia-ci` (scheduler, qui pilote aussi le job DORA du stack monitoring)
 
 ### 3.3 Verifier que tout tourne
 
@@ -264,7 +276,7 @@ C'est une **exigence** : un backup non teste = un backup non fiable.
 ### 4.8 Mettre a jour Restic / MinIO
 
 ```bash
-# Editer infrastructure/backup/Dockerfile (FROM restic/restic:0.17.0)
+# Editer infrastructure/backup/Dockerfile (ligne FROM restic/restic:0.17.0)
 docker compose -f docker-compose.backup.yml build backup-manager
 docker compose -f docker-compose.backup.yml up -d backup-manager
 
@@ -333,6 +345,6 @@ docker exec common-backup-manager-ci restic snapshots --latest 1
 | `wrong password` | RESTIC_PASSWORD different | Verifier .env / variable d'env |
 | MinIO inaccessible | Bucket inexistant | Creer le bucket via Console |
 | Backup tres long | Premiere fois (full) | Normal, suivants incrementaux |
-| Disque MinIO sature | Retention trop longue | Adjuster dans `retention.sh` |
+| Disque MinIO sature | Retention trop longue | Ajuster les `KEEP_*` en tete de `retention.sh` |
 | `repository is already locked` | Backup precedent crashe | `restic unlock` puis relancer |
 | Verification echoue | Donnees corrompues | Restic peut auto-reparer avec `--read-data` |

@@ -4,8 +4,10 @@
 
 - **Role** : Collecte les metriques de ressources des conteneurs Docker (CPU, RAM, reseau, I/O disque)
 - **Provient de Google** : Container Advisor, open source
-- **Port** : `8081` sur l'hote (8080 interne au conteneur), scrape par Prometheus
-- **Pas de sous-domaine** (service interne, accessible via l'IP hote si besoin debug)
+- **Port** : `8080` **interne au conteneur uniquement** - aucun port n'est
+  publie sur l'hote (le CST deconseille d'exposer cAdvisor). Prometheus le
+  scrape via le reseau Docker (`common-cadvisor-ci:8080`)
+- **Pas de sous-domaine** (service interne)
 - **Donnees en temps reel** sur chaque conteneur
 - **Essentiel** pour le monitoring de l'infrastructure conteneurisee
 - **Auto-decouverte** : tous les conteneurs du daemon Docker sont traces automatiquement
@@ -45,19 +47,22 @@ cAdvisor lit les cgroups Linux et le socket Docker pour exposer les metriques de
 
 | Parametre | Valeur |
 |-----------|--------|
-| Image | `gcr.io/cadvisor/cadvisor:v0.49.1` |
+| Image | `ghcr.io/google/cadvisor:v0.60.3` |
 | Container | `common-cadvisor-ci` |
-| Port hote | `8081` -> 8080 conteneur |
+| Port hote | **aucun** (8080 interne, joignable seulement via le reseau Docker) |
 | Reseau | `ci_network` + `monitoring_network` |
+| Options | `--docker_only=true`, `--housekeeping_interval=15s`, `--store_container_labels=false` |
+| Mode | `privileged: true`, device `/dev/kmsg` |
 
 ### Volumes (lecture seule obligatoire)
 
 | Volume hote | Montage | Role |
 |-------------|---------|------|
 | `/` | `/rootfs:ro` | Acces au filesystem hote |
-| `/var/run` | `/var/run` | Socket Docker |
+| `/var/run` | `/var/run:ro` | Socket Docker |
 | `/sys` | `/sys:ro` | cgroups v1/v2 |
 | `/var/lib/docker` | `/var/lib/docker:ro` | Metadata Docker |
+| `/dev/disk/` | `/dev/disk:ro` | Statistiques disque |
 
 ### Scrape Prometheus
 
@@ -95,22 +100,21 @@ docker ps --filter name=common-cadvisor-ci
 
 ### 3.3 Acceder a l'interface web de cAdvisor (optionnel)
 
-cAdvisor expose une UI basique sur le port 8081 :
+cAdvisor embarque une UI basique sur son port 8080, mais **aucun port n'est
+publie sur l'hote** : elle n'est pas joignable depuis un navigateur. Pour y
+jeter un oeil ponctuellement, passer par un autre conteneur du reseau :
 
 ```bash
-# Depuis le serveur
-curl -s http://localhost:8081/ | head -30
-
-# Ou dans un navigateur (si port 8081 accessible) :
-# http://<IP-serveur>:8081/
+docker exec common-prometheus-ci wget -qO- http://common-cadvisor-ci:8080/ | head -30
 ```
 
-Pour le dashboarding de production, utilise Grafana plutot que l'UI cAdvisor native.
+Pour le dashboarding, utilise Grafana plutot que l'UI cAdvisor native.
 
 ### 3.4 Verifier que les metriques sont exposees
 
 ```bash
-curl -s http://localhost:8081/metrics | grep "^container_" | head -20
+docker exec common-prometheus-ci wget -qO- http://common-cadvisor-ci:8080/metrics \
+  | grep "^container_" | head -20
 ```
 
 Doit retourner des lignes comme `container_cpu_usage_seconds_total{...}`.
@@ -155,7 +159,7 @@ Le dashboard est deja provisionne. Pour le verifier :
 
 ```bash
 # Comparable a "docker stats" mais via cAdvisor
-curl -s http://localhost:8081/api/v1.3/docker/<container-id>
+docker exec common-prometheus-ci wget -qO- http://common-cadvisor-ci:8080/api/v1.3/docker/<container-id>
 ```
 
 ### 4.3 Requetes PromQL utiles
@@ -206,8 +210,8 @@ Dans Grafana > Explore :
 ### 4.6 Lister tous les conteneurs traces
 
 ```bash
-curl -s http://localhost:8081/metrics | grep '^container_last_seen{' | \
-  sed -E 's/.*name="([^"]+)".*/\1/' | sort -u
+docker exec common-prometheus-ci wget -qO- http://common-cadvisor-ci:8080/metrics \
+  | grep '^container_last_seen{' | sed -E 's/.*name="([^"]+)".*/\1/' | sort -u
 ```
 
 ### 4.7 Surveiller l'impact d'un nouveau service
@@ -231,14 +235,14 @@ docker ps --filter name=common-cadvisor-ci
 ### Acces aux metriques
 
 ```bash
-curl -sf http://localhost:8081/metrics | head -5
+docker exec common-prometheus-ci wget -qO- http://common-cadvisor-ci:8080/metrics | head -5
 # Doit retourner des lignes de metriques Prometheus
 ```
 
 ### Target Prometheus UP
 
 ```bash
-curl -s "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/targets" | \
+curl -s -u admin:<mdp> "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/targets" | \
   jq '.data.activeTargets[] | select(.labels.job == "cadvisor") | .health'
 # Doit afficher "up"
 ```
@@ -246,7 +250,7 @@ curl -s "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/targets" | \
 ### Requete PromQL de test
 
 ```bash
-curl -s "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=up{job=\"cadvisor\"}" | jq
+curl -s -u admin:<mdp> "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=up{job=\"cadvisor\"}" | jq
 # Valeur "1" = cAdvisor OK
 ```
 
@@ -258,7 +262,7 @@ curl -s "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=up{job=\"
 docker stats --no-stream
 
 # Fenetre 2 : verifier via PromQL qu'on retrouve les memes valeurs
-curl -s "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=container_memory_usage_bytes{name=\"common-jenkins-ci\"}" | jq
+curl -s -u admin:<mdp> "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=container_memory_usage_bytes{name=\"common-jenkins-ci\"}" | jq
 ```
 
 ### Dashboard Grafana
@@ -274,7 +278,7 @@ curl -s "https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=container
 | cAdvisor ne demarre pas | Volume manquant ou permissions | Verifier montages `/sys`, `/var/lib/docker` |
 | `Failed to get rootfs` | `/rootfs:ro` non monte | Ajouter `-v /:/rootfs:ro` |
 | Aucune metrique dans Prometheus | Target DOWN | `docker logs common-cadvisor-ci` pour voir l'erreur |
-| UI web cAdvisor KO (port 8081) | Port pas expose a l'hote | Verifier `ports: - "8081:8080"` dans compose |
+| UI web cAdvisor injoignable depuis l'hote | Normal : aucun port hote n'est publie | Passer par le reseau Docker (voir 3.3) |
 | Metriques absentes pour certains conteneurs | Conteneur trop ephemere | Normal, cAdvisor scrape toutes les 15s |
 | Consommation CPU elevee de cAdvisor | Trop de conteneurs (~100+) | Ajouter `--housekeeping_interval=30s` |
 | `permission denied /var/lib/docker` | SELinux/AppArmor | Ajouter `--security-opt label:disable` |

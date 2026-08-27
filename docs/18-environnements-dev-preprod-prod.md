@@ -32,14 +32,14 @@ sur une branche jetable avant sa Merge Request.
 | | DEV | PREPROD | PROD |
 |---|---|---|---|
 | Ref declenchante | push sur `develop` | push sur `main` | tag `vX.Y.Z` |
-| Domaine | `*-dev.wk-archi-o24a-4-5-g1.fr` | `*-preprod.wk-archi-o24a-4-5-g1.fr` | `dsp5-archi-o24a-4-5-g1.fr` (frontend) / `api.dsp5-archi-o24a-4-5-g1.fr` (API) |
+| Domaine | `<projet>-dev.wk-archi-o24a-4-5-g1.fr` (+ `<projet>-api-dev.wk-...` pour l'API) | `<projet>-preprod.wk-archi-o24a-4-5-g1.fr` (+ `<projet>-api-preprod.wk-...`) | frontend : `<projet>.dsp5-archi-o24a-4-5-g1.fr` / **API : `<projet>-api.wk-archi-o24a-4-5-g1.fr`** (la zone `dsp5` n'heberge que le frontend et n'a pas de wildcard TLS) |
 | Methode de deploiement | remplacement simple du conteneur | remplacement simple du conteneur | Blue/Green (`deployBlueGreen.groovy`) |
 | Approbation manuelle | non | non | oui (stage `Approval PROD`) |
 | SonarQube / Quality Gate | oui | oui | oui (herite du build qui a promu le tag) |
 | Trivy / Gitleaks | oui | oui | oui |
-| E2E (Cypress) | non | oui, contre PREPROD deploye | non (deja valide en PREPROD) |
+| E2E (Playwright par defaut, Cypress au choix via `e2eFramework`) | non | oui, contre PREPROD deploye | non (deja valide en PREPROD) |
 | OWASP ZAP baseline | non | oui, contre PREPROD deploye | non |
-| K6 (perf) | non | oui, planifie hebdo (`Jenkinsfile.k6`, lundi ~2h) | non |
+| K6 (perf) | non | oui, job autonome planifie (`Jenkinsfile.k6`, `H 2 * * 1`) | non |
 | Monitoring post-deploiement | non (retire, voir 3.) | non (retire, voir 3.) | oui, 15 min avec rollback auto (Blue/Green) |
 | Conteneur Postgres | partage avec PREPROD (`<projet>-db-shared`) | partage avec DEV (`<projet>-db-shared`) | dedie (`<projet>-db-prod`) |
 | Base de donnees | `<projet>_dev` (schema separe, meme instance que PREPROD) | `<projet>_preprod` (schema separe, meme instance que DEV) | `<projet>_prod`, instance dediee |

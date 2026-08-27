@@ -96,10 +96,16 @@ Sans wildcard, tu dois creer chaque sous-domaine manuellement :
 | `ci.wk-archi-o24a-4-5-g1.fr` | Jenkins |
 | `registry.wk-archi-o24a-4-5-g1.fr` | Harbor |
 | `sonar.wk-archi-o24a-4-5-g1.fr` | SonarQube |
+| `chat.wk-archi-o24a-4-5-g1.fr` | Mattermost |
 | `monitor.wk-archi-o24a-4-5-g1.fr` | Grafana |
-| `prometheus.wk-archi-o24a-4-5-g1.fr` | Prometheus |
+| `grafana.wk-archi-o24a-4-5-g1.fr` | Grafana (alias du meme service) |
+| `prometheus.wk-archi-o24a-4-5-g1.fr` | Prometheus (basic auth) |
 | `s3.wk-archi-o24a-4-5-g1.fr` | MinIO API |
 | `minio.wk-archi-o24a-4-5-g1.fr` | MinIO Console |
+
+Le domaine `dsp5-archi-o24a-4-5-g1.fr` est distinct : c'est celui des **sites
+clients en PROD** (`<projet>.dsp5-...`). Il n'a pas de wildcard TLS, aussi les
+API restent sur la zone `wk` (voir `18-environnements-dev-preprod-prod.md`).
 
 **Verifier que le DNS est propage** (peut prendre quelques minutes a quelques heures) :
 
@@ -196,7 +202,8 @@ chmod +x init-infrastructure.sh
 ```bash
 cd /opt/furious-ducks/infrastructure
 
-# 1. Stack principal CI/CD (Traefik + GitLab + Jenkins + SonarQube)
+# 1. Stack principal CI/CD (Traefik, GitLab, Jenkins, SonarQube + sa BDD,
+#    Mattermost + sa BDD, et les deux postgres-exporter)
 docker compose up -d
 
 # Attends 5-10 minutes : GitLab demarre lentement (initialisation BDD interne)
@@ -285,7 +292,11 @@ cp harbor.yml.tmpl harbor.yml
 sudo ./install.sh --with-trivy
 ```
 
-Apres installation, attache Harbor au reseau `workflow-network` (voir le bloc d'instructions dans `infrastructure/docker-compose.yml`).
+Apres installation, attache le service `proxy` de Harbor aux reseaux
+`ci_network` et `workflow-network`, ajoute-lui les labels Traefik et commente
+sa section `ports:` — procedure complete dans `04-harbor.md` sections 3.3 et
+3.4, et dans l'en-tete de `infrastructure/docker-compose.yml`. Attention :
+re-executer `./prepare` efface ces modifications.
 
 1. Login : `admin` / `HARBOR_ADMIN_PASSWORD`.
 2. Cree un **projet Harbor** : Projects > + New Project, nom `furious-ducks` (ou le nom de ton projet), Public ou Private selon ton besoin.
@@ -301,7 +312,7 @@ Plus de details : `04-harbor.md`.
 
 1. Login : `admin` / `GF_SECURITY_ADMIN_PASSWORD` (du `.env`).
 2. Verifie les datasources : **Configuration > Data Sources** > "Prometheus" et "Loki" doivent etre verts (auto-provisionnes).
-3. Verifie les dashboards : **Dashboards > Browse > Furious Ducks** > tu dois voir 3 dashboards (Node, Docker, CI/CD Monitoring).
+3. Verifie les dashboards : **Dashboards > Browse > Furious Ducks** > tu dois voir 4 dashboards (Node, Docker, CI/CD Monitoring, DORA Metrics).
 4. (Optionnel) Configure un canal de notification : **Alerting > Contact points > Add contact point** (email, Slack, Mattermost).
 
 Plus de details : `07-grafana.md`.
@@ -318,15 +329,31 @@ Plus de details : `07-grafana.md`.
 
 Plus de details : `09-restic-minio.md`.
 
-### 4.7 Mattermost (optionnel)
+### 4.7 Mattermost - https://chat.wk-archi-o24a-4-5-g1.fr
 
-Si tu veux les alertes dans un chat :
-1. Dans Mattermost : **Integrations > Incoming Webhooks > Add**, choisis le canal `devops-alerts`.
-2. Copie l'URL du webhook dans `.env` : `MATTERMOST_WEBHOOK_URL=...`.
-3. Redemarre AlertManager et Jenkins :
+Mattermost fait partie du `docker-compose.yml` principal (avec sa propre BDD
+PostgreSQL) : il demarre avec le reste du socle. Il sert de canal de
+notification pour AlertManager, Jenkins et les scripts de backup.
+
+1. Cree le compte admin initial et l'equipe au premier acces sur
+   `https://chat.wk-archi-o24a-4-5-g1.fr`.
+2. **Integrations > Incoming Webhooks > Add**, choisis le canal
+   `devops-alerts`, copie l'URL du webhook.
+3. Cette URL est consommee a **deux endroits distincts** :
+   - **AlertManager** : dans un fichier secret monte, **pas** dans le `.env` :
+     ```bash
+     cd /opt/furious-ducks/infrastructure
+     printf '%s' '<URL_WEBHOOK>' > alertmanager/secrets/mattermost_webhook
+     chmod 600 alertmanager/secrets/mattermost_webhook
+     ```
+     (Faire de meme pour `alertmanager/secrets/smtp_password`.)
+   - **Jenkins et les scripts de backup** : via `MATTERMOST_WEBHOOK_URL` dans
+     le `.env`.
+4. Redemarre les services concernes :
    ```bash
    docker compose -f docker-compose.monitoring.yml restart alertmanager
    docker compose restart jenkins
+   docker compose -f docker-compose.backup.yml restart backup-manager
    ```
 
 ## 5. Configurer ton premier projet (Thé Tip Top)
@@ -460,7 +487,8 @@ Voir `infrastructure/scripts/rollback.sh --help` pour les options.
 |-----------|-----------|----------|
 | Verifier l'etat des services | Quotidien | `docker ps`, dashboards Grafana |
 | Verifier les backups | Quotidien | https://minio.wk-archi-o24a-4-5-g1.fr |
-| Test d'integrite Restic | Hebdomadaire (auto) | declenche par Ofelia tous les dimanches |
+| Test d'integrite Restic | Hebdomadaire (auto) | declenche par Ofelia le dimanche a 03h00 |
+| Backup du registre Harbor | Hebdomadaire (auto) | Ofelia, dimanche 01h00 |
 | Test de restauration | Trimestriel | `docker exec common-backup-manager-ci /scripts/restore.sh` |
 | Mise a jour images | Mensuel | `docker compose pull && docker compose up -d` |
 | Renouvellement TLS | Auto (Traefik) | rien a faire |
@@ -525,6 +553,9 @@ docker exec common-backup-manager-ci curl -f http://common-minio-ci:9000/minio/h
 
 - Ouvre SonarQube et regarde le rapport du projet.
 - Le quality gate "Furious Ducks" exige Coverage >= 70% sur le nouveau code, 0 vulnerability critique, etc.
+- Rappel du comportement reel : un gate en echec est **bloquant** sur `main`
+  (PREPROD) et sur un tag (PROD), mais seulement **`UNSTABLE`** sur `develop`
+  (DEV). Voir `05-sonarqube.md` section 2.
 - Soit tu corriges le code, soit tu ajustes temporairement le quality gate (deconseille en PROD).
 
 ## 9. Pour aller plus loin
@@ -544,7 +575,7 @@ docker exec common-backup-manager-ci curl -f http://common-minio-ci:9000/minio/h
 - [x] Reseau Docker `workflow-network` cree
 - [x] `docker compose up -d` reussi pour les 3 stacks
 - [x] Tous les conteneurs `common-*-ci` en etat `Up (healthy)`
-- [x] Acces HTTPS aux 8 sous-domaines avec certificat valide
+- [x] Acces HTTPS a tous les sous-domaines du tableau 1.3 avec certificat valide
 - [x] GitLab : root login OK, mot de passe change, cle SSH ajoutee
 - [x] Jenkins : admin login OK, credentials gitlab/harbor/sonar configures
 - [x] SonarQube : mot de passe change, quality gate "Furious Ducks" cree, token Jenkins genere

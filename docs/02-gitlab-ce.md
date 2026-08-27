@@ -23,7 +23,7 @@
 
 ### Image et conteneur
 
-- **Image** : `gitlab/gitlab-ce:17.4.0-ce.0`
+- **Image** : `gitlab/gitlab-ce:18.11.2-ce.0`
 - **Container** : `common-gitlab-ci`
 
 ### Volumes
@@ -193,6 +193,14 @@ Pour qu'un push declenche automatiquement un pipeline :
 4. SSL verification : laisse coche
 5. **Add webhook**
 6. Test : clique sur **Test > Push events**, tu dois voir HTTP 200
+
+> Jenkins refuse les declenchements anonymes. Le JCasC
+> (`infrastructure/jenkins/casc/jenkins.yml`) cree un compte de service dedie
+> par projet webhook - pour Thé Tip Top : `svc-thetiptop-webhook` (mot de passe
+> `JENKINS_WEBHOOK_THETIPTOP_PASSWORD` du `.env`), restreint par un role d'item
+> au seul job `thetiptop`. Les identifiants sont a placer dans l'URL du
+> webhook :
+> `https://svc-thetiptop-webhook:<mdp>@ci.wk-archi-o24a-4-5-g1.fr/project/thetiptop`
 
 ### 4.4 Gerer les utilisateurs et permissions
 

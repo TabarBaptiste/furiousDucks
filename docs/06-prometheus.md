@@ -4,17 +4,21 @@
 
 - **Role** : Collecte de metriques time-series, alerting, base du systeme de monitoring
 - Scrape les metriques de tous les services de l'infrastructure CI/CD
-- **Port** : `9090` (via Traefik)
-- **Sous-domaine** : `prometheus.wk-archi-o24a-4-5-g1.fr`
+- **Port** : `9090` (interne, expose via Traefik - aucun port hote)
+- **Sous-domaine** : `prometheus.wk-archi-o24a-4-5-g1.fr`, protege par
+  **basic auth** (`traefik-auth`, memes identifiants que le dashboard Traefik)
+  et par le middleware `rate-limit`
 - **Langage de requete** : PromQL (Prometheus Query Language)
-- **Retention** : 30 jours de donnees
-- **Services scrapes** : Jenkins, GitLab, Traefik, cAdvisor, Node Exporter, SonarQube, MinIO, Loki, Grafana
+- **Retention** : 30 jours de donnees (`--storage.tsdb.retention.time=30d`)
+- **Services scrapes** : Prometheus (self), Node Exporter, cAdvisor, Traefik,
+  Jenkins, GitLab, MinIO, Loki, Grafana, les deux postgres-exporter
+  (SonarQube + Mattermost) et Harbor
 
 ## 2. Configuration
 
 ### Image et conteneur
 
-- **Image** : `prom/prometheus:v2.54.0`
+- **Image** : `prom/prometheus:v3.5.4`
 - **Container** : `common-prometheus-ci`
 
 ### Fichier de configuration
@@ -24,37 +28,51 @@
 
 ### Targets de scraping
 
-| Target          | Endpoint                          | Intervalle |
-|-----------------|-----------------------------------|------------|
-| Node Exporter   | `node-exporter:9100/metrics`      | 15s        |
-| cAdvisor        | `cadvisor:8080/metrics`           | 15s        |
-| Traefik         | `traefik:8080/metrics`            | 15s        |
-| Jenkins         | `jenkins:8080/prometheus`         | 30s        |
-| GitLab          | `gitlab:9168/metrics`             | 30s        |
-| SonarQube       | `sonarqube:9000/api/monitoring`   | 30s        |
-| MinIO           | `minio:9000/minio/v2/metrics`     | 30s        |
-| Loki            | `loki:3100/metrics`               | 15s        |
-| Grafana         | `grafana:3000/metrics`            | 30s        |
+Les cibles sont adressees par **nom de conteneur** (DNS Docker sur
+`ci_network`), pas par nom de service Compose. `scrape_interval` est global
+(15s) : aucun job ne le surcharge.
+
+| Job | Endpoint | Remarque |
+|-----|----------|----------|
+| `prometheus` | `localhost:9090/metrics` | self-monitoring |
+| `node-exporter` | `common-node-exporter-ci:9100/metrics` | metriques hote + textfiles (backup, DORA) |
+| `cadvisor` | `common-cadvisor-ci:8080/metrics` | metriques conteneurs |
+| `traefik` | `common-traefik-ci:8082/metrics` | entrypoint interne `metrics`, pas le dashboard |
+| `jenkins` | `common-jenkins-ci:8080/prometheus` | plugin `prometheus` |
+| `gitlab` | `common-gitlab-ci:80/-/metrics` | necessite `monitoring_whitelist` (deja dans le compose) |
+| `minio` | `common-minio-ci:9000/minio/v2/metrics/cluster` | `bearer_token_file: /etc/prometheus/secrets/minio_token` |
+| `loki` | `common-loki-ci:3100/metrics` | |
+| `grafana` | `common-grafana-ci:3000/metrics` | |
+| `postgres-exporter` | `common-sonarqube-db-exporter-ci:9187` et `common-mattermost-db-exporter-ci:9187` | label `database` = `sonarqube` / `mattermost` |
+| `harbor` | `nginx:9090/metrics` | Harbor deploye separement ; DOWN tant que son `proxy` n'est pas sur `ci_network` (voir `04-harbor.md`) |
+
+> **SonarQube n'a pas de job de scrape.** `/api/monitoring/metrics` (format
+> Prometheus) est reserve a l'edition Developer ; en Community Build,
+> `/api/system/status` ne renvoie que du JSON, inexploitable par Prometheus.
+> La disponibilite de SonarQube est couverte au niveau conteneur via cAdvisor.
+
+> **Le token MinIO** se genere avec `mc admin prometheus generate local` et
+> s'ecrit dans `infrastructure/prometheus/secrets/minio_token` (jamais
+> committe, voir le `.example`).
 
 ### Regles d'alerte
 
 - Chemin : `infrastructure/prometheus/rules/alerts.yml`
 - Categories d'alertes :
-  - **Infrastructure** :
-    - CPU utilisation > 80% pendant 5 minutes
-    - RAM utilisation > 85% pendant 5 minutes
-    - Disque utilisation > 90%
-  - **Conteneurs** :
-    - Conteneur down (restart frequent ou arret inattendu)
-    - Conteneur utilisant plus de memoire que sa limite
-  - **Services CI/CD** :
-    - Jenkins indisponible
-    - GitLab indisponible
-    - Harbor indisponible
-    - SonarQube indisponible
-  - **Backups** :
-    - Echec de backup detecte
-    - Backup non execute depuis plus de 24h
+  - **Infrastructure** (`infrastructure`) :
+    - `HostHighCpuUsage`, `HostHighMemoryUsage`
+    - `HostDiskSpaceLow`, `HostDiskSpaceCritical`, `HostOutOfDiskSpace`
+  - **Conteneurs** (`container`) :
+    - `ContainerDown` (silence cAdvisor > 90s sur un conteneur `common-*`)
+    - `ContainerHighCpuUsage`, `ContainerHighMemoryUsage`
+    - `ContainerRestarting` (redemarrages en boucle)
+  - **Services CI/CD** (`cicd-services`) :
+    - `JenkinsDown`
+    - `GitLabDown`
+    - `TraefikHighErrorRate`
+  - **Backups** (`backup`) :
+    - `BackupFailed` : echec de backup detecte
+    - `BackupTooOld` : backup non execute depuis trop longtemps
 
 ### Integration AlertManager
 
@@ -91,15 +109,24 @@ docker logs common-prometheus-ci --tail 30
 
 ### 3.4 Acceder a l'interface
 
-Ouvre `https://prometheus.wk-archi-o24a-4-5-g1.fr`. **Pas de login** (Prometheus est en interne, l'acces est protege par Traefik et un middleware basic auth si tu en ajoutes un).
+Ouvre `https://prometheus.wk-archi-o24a-4-5-g1.fr`. Le navigateur demande un
+**login basic auth** : ce sont les identifiants de `TRAEFIK_DASHBOARD_AUTH`
+(memes que le dashboard Traefik). Prometheus n'a pas d'authentification
+native ; c'est le middleware Traefik `traefik-auth` qui protege la route
+publique, double d'un `rate-limit`.
+
+Les commandes `curl` de ce document doivent donc porter `-u admin:<mdp>`.
 
 ### 3.5 Verifier les targets
 
 L'etape la plus importante : verifier que **tous les services sont scrapes correctement**.
 
 1. Ouvre `https://prometheus.wk-archi-o24a-4-5-g1.fr/targets`
-2. Tu vois la liste des jobs : `prometheus`, `node-exporter`, `cadvisor`, `traefik`, `jenkins`, `gitlab`, `sonarqube`, `minio`, `loki`, `grafana`
-3. **Chaque target doit etre en etat UP (vert)**.
+2. Tu vois la liste des jobs : `prometheus`, `node-exporter`, `cadvisor`,
+   `traefik`, `jenkins`, `gitlab`, `minio`, `loki`, `grafana`,
+   `postgres-exporter`, `harbor`
+3. **Chaque target doit etre en etat UP (vert)**, a l'exception de `harbor`
+   tant que Harbor n'est pas installe et rattache a `ci_network`.
 
 Si un target est DOWN :
 - Verifie que le service tourne : `docker ps`
@@ -107,7 +134,11 @@ Si un target est DOWN :
 - Cas particuliers :
   - **GitLab** : il faut activer les metriques dans Admin > Settings > Metrics and profiling > Prometheus
   - **Jenkins** : le plugin Prometheus doit etre installe (deja dans `plugins.txt`)
-  - **SonarQube** : l'endpoint `/api/monitoring/metrics` necessite Developer Edition (en Community, on peut commenter ce job)
+  - **Harbor** : cible `nginx:9090`. Reste DOWN tant que Harbor n'est pas
+    deploye avec `metric.enabled: true` et son service `proxy` rattache a
+    `ci_network` (voir `04-harbor.md`)
+  - **MinIO** : verifier que `prometheus/secrets/minio_token` est bien
+    renseigne, sinon le scrape renvoie 401
 
 ### 3.6 Tester une requete PromQL
 
@@ -182,11 +213,11 @@ scrape_configs:
       - targets: ['mon-service:9100']
 ```
 
-Puis recharge sans redemarrer :
+Puis recharge sans redemarrer. Le port 9090 n'etant **pas publie sur l'hote**,
+il faut passer par le conteneur (ou par l'URL publique avec le basic auth) :
 
 ```bash
-curl -X POST http://localhost:9090/-/reload
-# (depuis le serveur)
+docker exec common-prometheus-ci wget --post-data='' -qO- http://localhost:9090/-/reload
 ```
 
 ### 4.3 Ajouter une regle d'alerte
@@ -207,16 +238,23 @@ Edite `infrastructure/prometheus/rules/alerts.yml`, ajoute :
 Puis recharge :
 
 ```bash
-curl -X POST http://localhost:9090/-/reload
+docker exec common-prometheus-ci wget --post-data='' -qO- http://localhost:9090/-/reload
 ```
 
 ### 4.4 Silencier temporairement une alerte
 
-Va dans AlertManager : `https://alertmanager.wk-archi-o24a-4-5-g1.fr` (si expose) ou via l'API.
+AlertManager n'est **pas expose via Traefik** (`traefik.enable=false`) : il n'a
+ni sous-domaine ni port hote, et l'UI Prometheus ne sait pas creer de silence.
+Le silencing se fait avec `amtool` depuis le conteneur :
 
-Plus simple via l'UI Prometheus :
-1. **Alerts > <alert> > silence**
-2. Definir la duree et la raison
+```bash
+docker exec common-alertmanager-ci amtool \
+  --alertmanager.url=http://localhost:9093 \
+  silence add alertname=JenkinsDown --duration=30m \
+  --comment="Maintenance planifiee"
+```
+
+Voir `15-alertmanager.md` section 4.2.
 
 ### 4.5 Voir l'historique d'une metrique
 
@@ -231,7 +269,7 @@ Le volume `common-prometheus-data-ci` est sauvegarde par Restic (voir `09-restic
 ### Acces web
 
 ```bash
-curl -f https://prometheus.wk-archi-o24a-4-5-g1.fr/-/healthy
+curl -f -u admin:<mdp> https://prometheus.wk-archi-o24a-4-5-g1.fr/-/healthy
 ```
 
 Resultat attendu : code HTTP 200, reponse `Prometheus Server is Healthy.`
@@ -245,7 +283,7 @@ Resultat attendu : code HTTP 200, reponse `Prometheus Server is Healthy.`
 ### Requete PromQL de test
 
 ```bash
-curl -g 'https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=up{job="jenkins"}'
+curl -g -u admin:<mdp> 'https://prometheus.wk-archi-o24a-4-5-g1.fr/api/v1/query?query=up{job="jenkins"}'
 ```
 
 Resultat attendu : reponse JSON avec la valeur `1` pour le job Jenkins (service UP).

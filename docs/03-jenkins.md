@@ -5,8 +5,9 @@
 - **Role** : Orchestration des pipelines CI/CD (build, tests, scans, packaging, deploiements)
 - Centralise les rapports et historise les executions
 - **Ports** :
-  - `8080` : Web UI (via Traefik)
-  - `50000` : JNLP agents (communication agents de build)
+  - `8080` : Web UI (interne au conteneur, expose via Traefik - aucun port hote)
+  - `50000` : JNLP agents - **non publie** sur l'hote ; les agents Docker
+    ephemeres se connectent depuis le reseau Docker
 - **Sous-domaine** : `ci.wk-archi-o24a-4-5-g1.fr`
 - **Pipeline as Code** via `Jenkinsfile` a la racine de chaque projet
 - **Shared Libraries** pour standardiser les pipelines entre projets
@@ -33,7 +34,15 @@
 ### JCasC (Jenkins Configuration as Code)
 
 - Chemin : `infrastructure/jenkins/casc/jenkins.yml`
-- Configuration declarative de Jenkins : securite, credentials, agents, outils, vues
+- Configuration declarative de Jenkins : securite (comptes locaux + RBAC
+  `role-strategy`), agents Docker (`docker-agent`, `docker-agent-node`),
+  connexions globales (SonarQube, GitLab, Mattermost, email), outils
+  (SonarScanner)
+- **Ne contient pas de credentials** : le store de credentials reste a remplir
+  a la main (voir 3.5), aucun secret n'est committe
+- Cree deux comptes locaux : `admin` (`JENKINS_ADMIN_PASSWORD`) et
+  `svc-thetiptop-webhook` (`JENKINS_WEBHOOK_THETIPTOP_PASSWORD`), ce dernier
+  restreint par role d'item au seul job `thetiptop`
 
 ### Plugins
 
@@ -47,16 +56,22 @@
 
 ### Credentials Store
 
-- Token Harbor (push/pull d'images Docker)
-- Token SonarQube (declenchement des scans)
-- Token GitLab (acces API, statut de commit)
-- Credentials S3/MinIO (stockage des artefacts et backups)
+- `harbor-credentials` (push/pull d'images Docker)
+- `sonarqube-token` (declenchement des scans)
+- `gitlab-api-token` (acces API, statut de commit)
+- `gitlab-ssh-key` (checkout SCM de la shared library)
+- Par projet client : credentials BDD (`<projet>-db-credentials`) et secrets
+  applicatifs (`apiSecretEnv`)
 
 ### Shared Library
 
 - Chemin : `infrastructure/jenkins/shared-library/`
-- Fonctions partagees : `buildDockerImage()`, `pushToHarbor()`, `runSonarScan()`, `deployBlueGreen()`, `notifyGitLab()`
-- Chargement automatique dans tous les pipelines
+- Trois points d'entree (`vars/`) :
+  - `ciPipeline.groovy` : pipeline complet build / tests / scans / deploiement
+  - `deployBlueGreen.groovy` : bascule Blue/Green PROD + monitoring 15 min
+  - `k6Pipeline.groovy` : job de tests de charge planifie (voir `13-k6.md`)
+- Chargee explicitement par chaque Jenkinsfile via
+  `@Library('furious-ducks-shared-library') _`
 
 ### Integrations
 
@@ -116,9 +131,16 @@ Cree les credentials suivants :
 | `gitlab-ssh-key` | SSH Username with private key | username `git`, ta cle SSH privee |
 | `harbor-credentials` | Username with password | `admin` / `HARBOR_ADMIN_PASSWORD` |
 | `sonarqube-token` | Secret text | Le token SonarQube (a creer ensuite, voir `05-sonarqube.md` section 3.4) |
-| `mattermost-webhook` | Secret text | URL du webhook Mattermost (optionnel) |
+
+Le webhook Mattermost n'est **pas** un credential Jenkins : il est injecte par
+variable d'environnement (`MATTERMOST_WEBHOOK_URL` / `MATTERMOST_CHANNEL` dans
+`.env`) et consomme par le bloc `mattermostNotifier` du JCasC.
 
 ### 3.6 Verifier la connexion GitLab
+
+La connexion GitLab est deja declaree par le JCasC (`gitLabConnectionConfig`,
+nom `GitLab`) ; il reste a verifier qu'elle fonctionne une fois le credential
+`gitlab-api-token` cree.
 
 **Manage Jenkins > System** > section **GitLab** :
 - Connection name : GitLab
@@ -128,7 +150,8 @@ Cree les credentials suivants :
 
 ### 3.7 Verifier la connexion SonarQube
 
-(A faire apres avoir configure SonarQube et cree le credential `sonarqube-token`.)
+(Le serveur `SonarQube` est deja declare par le JCasC. A verifier apres avoir
+configure SonarQube et cree le credential `sonarqube-token`.)
 
 **Manage Jenkins > System** > section **SonarQube servers** :
 - Name : SonarQube

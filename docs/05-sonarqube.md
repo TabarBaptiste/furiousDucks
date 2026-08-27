@@ -26,23 +26,25 @@
 
 ### Integration Jenkins
 
-- **Plugin SonarQube Scanner** installe dans Jenkins
+- **Plugin SonarQube Scanner** installe dans Jenkins ; serveur `SonarQube`
+  (`http://common-sonarqube-ci:9000`) declare par le JCasC
 - Token d'authentification stocke dans le Credentials Store de Jenkins
-- Stage SonarQube dans le Jenkinsfile :
-  ```groovy
-  stage('SonarQube Analysis') {
-      steps {
-          withSonarQubeEnv('SonarQube') {
-              sh 'sonar-scanner'
-          }
-      }
-  }
-  stage('Quality Gate') {
-      steps {
-          waitForQualityGate abortPipeline: true
-      }
-  }
-  ```
+  (`sonarqube-token`)
+- Les projets clients n'ecrivent pas ces stages eux-memes : la shared library
+  (`ciPipeline.groovy`) fournit `SonarQube Analysis` puis `Quality Gate`.
+
+**Comportement reel du Quality Gate** (`waitForQualityGateResult()` dans
+`ciPipeline.groovy`) - le gate est appele avec `abortPipeline: false`, mais son
+verdict est ensuite exploite selon l'environnement cible :
+
+| `DEPLOY_ENV` | Gate en echec | Effet |
+|---|---|---|
+| `dev` (branche `develop`) | non bloquant | build marque `UNSTABLE`, le deploiement DEV continue |
+| `preprod` (branche `main`) | **bloquant** | `error()`, le pipeline s'arrete avant deploiement |
+| `prod` (tag `vX.Y.Z`) | **bloquant** | idem (le tag herite en pratique du gate passe sur `main`) |
+
+Un timeout de 5 minutes sur l'attente du gate passe le build en `UNSTABLE`
+sans l'interrompre.
 
 ### Quality Gate "Furious Ducks"
 

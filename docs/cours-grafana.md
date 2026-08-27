@@ -76,7 +76,7 @@ Une fois connecte, le menu a gauche est le point de depart pour tout :
 | **Alerting** | Configurer des alertes automatiques |
 | **Connections > Data sources** | Voir/configurer les connexions a Prometheus et Loki |
 
-## 6. Visite guidee des 3 dashboards deja en place
+## 6. Visite guidee des 4 dashboards deja en place
 
 Ils sont provisionnes automatiquement (dossier **Furious Ducks** dans **Dashboards**), pas besoin de les creer :
 
@@ -88,6 +88,9 @@ Consommation de ressources par conteneur (via cAdvisor). Utile pour reperer un c
 
 ### CI/CD Monitoring
 Statistiques sur les pipelines Jenkins (duree, taux de succes/echec). Utile pour suivre la sante du processus d'integration continue dans le temps, pas juste build par build.
+
+### DORA Metrics
+Les quatre indicateurs DORA (frequence de deploiement, lead time, taux d'echec des changements, MTTR). Ils sont calcules quotidiennement par un script dedie (`infrastructure/dora/`) qui interroge l'API GitLab et ecrit le resultat dans les fichiers texte lus par Node Exporter, puis scrapes par Prometheus.
 
 **Pour naviguer dans un dashboard :**
 - En haut a droite : la **plage de temps** ("Last 1 hour", "Last 24 hours"...) — c'est la cause n°1 d'un dashboard qui semble vide ("No data") : la plage ne couvre pas la periode qui t'interesse.
