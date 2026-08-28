@@ -19,9 +19,9 @@
 
 > Ce document couvre l'installation et l'administration de Jenkins. Pour le
 > detail stage par stage du pipeline (`ciPipeline.groovy`), la matrice
-> branche x stage et sa justification, voir `19-pipeline-ci-cd.md`. Pour le
+> branche x stage et sa justification, voir `../how/02-pipeline-ci-cd.md`. Pour le
 > mapping branche -> environnement et les differences DEV/PREPROD/PROD, voir
-> `18-environnements-dev-preprod-prod.md`.
+> `../how/01-environnements-dev-preprod-prod.md`.
 
 ## 2. Configuration
 

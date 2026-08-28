@@ -78,7 +78,7 @@
 
 ## 3. Mise en route
 
-C'est le **premier service** que tu dois lancer : tous les autres dependent de lui pour etre exposes en HTTPS. Si tu n'as pas encore lu `00-getting-started.md`, fais-le d'abord.
+C'est le **premier service** que tu dois lancer : tous les autres dependent de lui pour etre exposes en HTTPS. Si tu n'as pas encore lu `../00-getting-started.md`, fais-le d'abord.
 
 ### 3.1 Prerequis avant de demarrer Traefik
 

@@ -105,7 +105,7 @@ Sans wildcard, tu dois creer chaque sous-domaine manuellement :
 
 Le domaine `dsp5-archi-o24a-4-5-g1.fr` est distinct : c'est celui des **sites
 clients en PROD** (`<projet>.dsp5-...`). Il n'a pas de wildcard TLS, aussi les
-API restent sur la zone `wk` (voir `18-environnements-dev-preprod-prod.md`).
+API restent sur la zone `wk` (voir `how/01-environnements-dev-preprod-prod.md`).
 
 **Verifier que le DNS est propage** (peut prendre quelques minutes a quelques heures) :
 
@@ -248,7 +248,7 @@ L'infrastructure tourne, mais les services ont besoin de quelques reglages avant
 5. Test : `ssh -T -p 2222 git@git.wk-archi-o24a-4-5-g1.fr` doit repondre `Welcome to GitLab, @ton_user`.
 6. **Cree un Personal Access Token** pour Jenkins : User Settings > Access Tokens > nom `jenkins-token`, scopes `api` + `read_repository` + `write_repository`. **Note le token, il ne sera plus affiche ensuite**.
 
-Plus de details : `02-gitlab-ce.md`.
+Plus de details : `tools/02-gitlab-ce.md`.
 
 ### 4.2 Jenkins - https://ci.wk-archi-o24a-4-5-g1.fr
 
@@ -259,7 +259,7 @@ Plus de details : `02-gitlab-ce.md`.
    - `sonarqube-token` (Secret text) : a creer apres l'etape SonarQube ci-dessous
 3. Verifie que la connexion Jenkins -> GitLab fonctionne : **Manage Jenkins > System > GitLab > Test Connection**.
 
-Plus de details : `03-jenkins.md`.
+Plus de details : `tools/03-jenkins.md`.
 
 ### 4.3 SonarQube - https://sonar.wk-archi-o24a-4-5-g1.fr
 
@@ -272,7 +272,7 @@ Plus de details : `03-jenkins.md`.
 4. **Genere un token Jenkins** : My Account > Security > Generate Token, nom `jenkins`. **Note le token**.
 5. Retourne dans Jenkins et ajoute le token dans le credential `sonarqube-token` cree precedemment.
 
-Plus de details : `05-sonarqube.md`.
+Plus de details : `tools/05-sonarqube.md`.
 
 ### 4.4 Harbor - https://registry.wk-archi-o24a-4-5-g1.fr
 
@@ -294,7 +294,7 @@ sudo ./install.sh --with-trivy
 
 Apres installation, attache le service `proxy` de Harbor aux reseaux
 `ci_network` et `workflow-network`, ajoute-lui les labels Traefik et commente
-sa section `ports:` — procedure complete dans `04-harbor.md` sections 3.3 et
+sa section `ports:` — procedure complete dans `tools/04-harbor.md` sections 3.3 et
 3.4, et dans l'en-tete de `infrastructure/docker-compose.yml`. Attention :
 re-executer `./prepare` efface ces modifications.
 
@@ -306,7 +306,7 @@ re-executer `./prepare` efface ces modifications.
    ```
    Tu dois voir `Login Succeeded`.
 
-Plus de details : `04-harbor.md`.
+Plus de details : `tools/04-harbor.md`.
 
 ### 4.5 Grafana - https://monitor.wk-archi-o24a-4-5-g1.fr
 
@@ -315,7 +315,7 @@ Plus de details : `04-harbor.md`.
 3. Verifie les dashboards : **Dashboards > Browse > Furious Ducks** > tu dois voir 4 dashboards (Node, Docker, CI/CD Monitoring, DORA Metrics).
 4. (Optionnel) Configure un canal de notification : **Alerting > Contact points > Add contact point** (email, Slack, Mattermost).
 
-Plus de details : `07-grafana.md`.
+Plus de details : `tools/07-grafana.md`.
 
 ### 4.6 MinIO - https://minio.wk-archi-o24a-4-5-g1.fr
 
@@ -327,7 +327,7 @@ Plus de details : `07-grafana.md`.
    ```
 4. Retourne dans MinIO Console et verifie que le bucket contient des donnees (sous `furious-ducks-backups/`).
 
-Plus de details : `09-restic-minio.md`.
+Plus de details : `tools/09-restic-minio.md`.
 
 ### 4.7 Mattermost - https://chat.wk-archi-o24a-4-5-g1.fr
 
@@ -555,7 +555,7 @@ docker exec common-backup-manager-ci curl -f http://common-minio-ci:9000/minio/h
 - Le quality gate "Furious Ducks" exige Coverage >= 70% sur le nouveau code, 0 vulnerability critique, etc.
 - Rappel du comportement reel : un gate en echec est **bloquant** sur `main`
   (PREPROD) et sur un tag (PROD), mais seulement **`UNSTABLE`** sur `develop`
-  (DEV). Voir `05-sonarqube.md` section 2.
+  (DEV). Voir `tools/05-sonarqube.md` section 2.
 - Soit tu corriges le code, soit tu ajustes temporairement le quality gate (deconseille en PROD).
 
 ## 9. Pour aller plus loin

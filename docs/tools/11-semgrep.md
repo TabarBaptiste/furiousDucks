@@ -52,7 +52,7 @@ couvert par SonarQube) ni sur `feature/*`. Le stage est place **avant**
 `Docker Build`, la ou il peut encore bloquer la construction. Un resultat non
 vide passe le build en `UNSTABLE` (il ne l'arrete pas). Voir
 `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy` et la matrice de
-`19-pipeline-ci-cd.md`.
+`../how/02-pipeline-ci-cd.md`.
 
 ### Commandes type
 

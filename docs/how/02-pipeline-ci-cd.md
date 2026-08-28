@@ -1,7 +1,7 @@
 # Pipeline CI/CD - Matrice et justification des stages
 
 Ce document repond a l'exigence "tous les stages doivent etre reellement
-justifies". Il complete `18-environnements-dev-preprod-prod.md` (qui couvre le
+justifies". Il complete `01-environnements-dev-preprod-prod.md` (qui couvre le
 mapping branche -> environnement et les differences DEV/PREPROD/PROD) en
 detaillant, stage par stage, ce qui tourne ou non selon la branche, et
 pourquoi. Source : `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy`.
@@ -123,7 +123,7 @@ dizaines de secondes) au regard du risque evite.
 - **Approval PROD / Deploy PROD** (+ API), Blue/Green : uniquement sur tag,
   avec approbation manuelle prealable (`admin`/`maintainers`). Le Blue/Green
   et son monitoring 15 min sont detailles dans
-  `18-environnements-dev-preprod-prod.md` (section 3).
+  `01-environnements-dev-preprod-prod.md` (section 3).
 
 ### 3.8 Validation post-deploiement (preprod uniquement)
 
@@ -140,13 +140,13 @@ dizaines de secondes) au regard du risque evite.
   de son cout propre, il polluait le workspace et gonflait le contexte Docker
   envoye a `docker build`.
 - **Monitor PREPROD** (supprime) : voir
-  `18-environnements-dev-preprod-prod.md` section 3 - PREPROD n'a pas de
+  `01-environnements-dev-preprod-prod.md` section 3 - PREPROD n'a pas de
   mecanisme de rollback automatique pour exploiter une fenetre de
   surveillance, contrairement a PROD (Blue/Green).
 - **K6 Performance** (deplace en job planifie) : n'a pas de dependance au
   workspace du build, il tape sur PREPROD deja deploye. Devient
   `Jenkinsfile.k6`, execution hebdomadaire planifiee plutot qu'a chaque push -
-  voir `13-k6.md`.
+  voir `../tools/13-k6.md`.
 - Le doublon `checkout scm` explicite dans l'ancien stage "Checkout" a ete
   retire : Jenkins fait deja ce checkout dans son stage implicite
   "Declarative: Checkout SCM". Le stage renomme "Prepare" garde son role reel
@@ -180,7 +180,7 @@ disque Jenkins.
 
 ### 5.3 Retention Harbor
 
-Detaillee dans `04-harbor.md` (sections 3.9 et 3.10). Resume :
+Detaillee dans `../tools/04-harbor.md` (sections 3.9 et 3.10). Resume :
 
 - Images `develop-*`/`main-*` : 10 plus recentes conservees.
 - Images `v*` (releases) : conservees indefiniment - dependance directe de
@@ -197,5 +197,5 @@ qui protege ainsi un contenu deja nettoye de l'essentiel du superflu.
   `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy`
 - Promotion d'image : `promoteImage()`, stage `Promote Image`
 - Nettoyage post-build : `cleanupWorkspace()`
-- Politique de retention Harbor : `infrastructure/docs/04-harbor.md`
-- Environnements et Blue/Green : `infrastructure/docs/18-environnements-dev-preprod-prod.md`
+- Politique de retention Harbor : `infrastructure/docs/tools/04-harbor.md`
+- Environnements et Blue/Green : `infrastructure/docs/how/01-environnements-dev-preprod-prod.md`

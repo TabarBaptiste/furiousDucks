@@ -1,6 +1,6 @@
 # Cours : comprendre et utiliser Grafana dans le workflow Furious Ducks
 
-> Ce document est un cours d'introduction, pense pour quelqu'un qui n'a jamais utilise Grafana. Pour la reference technique complete (configuration, depannage), voir [`07-grafana.md`](07-grafana.md).
+> Ce document est un cours d'introduction, pense pour quelqu'un qui n'a jamais utilise Grafana. Pour la reference technique complete (configuration, depannage), voir [`tools/07-grafana.md`](../tools/07-grafana.md).
 
 ---
 
@@ -51,7 +51,7 @@ Grafana ne fait que l'affichage. Trois autres services font le travail de collec
 
 Grafana vient se brancher sur Prometheus (langage de requete : **PromQL**) et sur Loki (langage de requete : **LogQL**) pour tout afficher au meme endroit.
 
-> Pour aller plus loin sur chaque brique : [`06-prometheus.md`](06-prometheus.md), [`08-loki.md`](08-loki.md), [`16-alloy.md`](16-alloy.md).
+> Pour aller plus loin sur chaque brique : [`tools/06-prometheus.md`](../tools/06-prometheus.md), [`tools/08-loki.md`](../tools/08-loki.md), [`tools/16-alloy.md`](../tools/16-alloy.md).
 
 ## 4. Vocabulaire de base
 
@@ -144,7 +144,7 @@ up == 0
 
 ## 9. Aller plus loin (quand tu seras a l'aise)
 
-- **Creer une alerte** : sur un panel, `Edit > Alert > Create alert rule`, definir un seuil (ex. CPU > 90% pendant 5 min), puis un canal de notification (Mattermost). Detail complet dans [`07-grafana.md` §3.6 et §4.4](07-grafana.md).
+- **Creer une alerte** : sur un panel, `Edit > Alert > Create alert rule`, definir un seuil (ex. CPU > 90% pendant 5 min), puis un canal de notification (Mattermost). Detail complet dans [`tools/07-grafana.md` §3.6 et §4.4](../tools/07-grafana.md).
 - **Creer son propre dashboard** : `Dashboards > New > Add Visualization`, choisir une datasource, ecrire une requete, choisir un type de visuel (graph, jauge, table...).
 - **Importer un dashboard tout fait** depuis [grafana.com/grafana/dashboards](https://grafana.com/grafana/dashboards) via son ID (ex. le dashboard officiel Docker/cAdvisor).
 
@@ -159,4 +159,4 @@ Pour eviter les malentendus frequents chez les debutants :
 
 ---
 
-**Pour la reference technique complete** (configuration precise, variables d'environnement, procedures de mise a jour, depannage detaille) : voir [`07-grafana.md`](07-grafana.md), [`06-prometheus.md`](06-prometheus.md), [`08-loki.md`](08-loki.md) et [`16-alloy.md`](16-alloy.md).
+**Pour la reference technique complete** (configuration precise, variables d'environnement, procedures de mise a jour, depannage detaille) : voir [`tools/07-grafana.md`](../tools/07-grafana.md), [`tools/06-prometheus.md`](../tools/06-prometheus.md), [`tools/08-loki.md`](../tools/08-loki.md) et [`tools/16-alloy.md`](../tools/16-alloy.md).
