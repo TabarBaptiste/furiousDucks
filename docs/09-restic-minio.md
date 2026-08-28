@@ -33,9 +33,54 @@ Politique appliquee par `retention.sh` (`restic forget --group-by paths`) :
 | `--keep-yearly`  | 2      |
 
 **Principe 3-2-1** :
-- **3** copies des donnees (volumes Docker + snapshot local + MinIO)
-- **2** supports differents (filesystem + stockage objet S3)
-- **1** copie distante (MinIO, potentiellement replique)
+- **3** copies : donnees live (volumes Docker) + depot Restic MinIO (VPS)
+  + depot Restic sur le poste local
+- **2** supports : stockage objet S3 du VPS + disque du poste local
+- **1** copie hors site : le depot local, hors du datacenter de l'hebergeur
+
+MinIO tournant sur le **meme VPS** que les services sauvegardes, il ne
+constitue ni un second support ni une copie hors site : une perte du serveur
+ou de son disque detruirait donnees et sauvegardes ensemble. La troisieme
+copie est assuree par `script/backup-pull-local.sh`, execute **sur le poste
+local**, qui tire les snapshots via `restic copy` depuis `s3.wk-archi-o24a-4-5-g1.fr`.
+
+La copie reste incrementale et dedupliquee, et les donnees restent chiffrees
+AES-256 de bout en bout : la cle Restic ne quitte jamais le poste. L'acces
+utilise un utilisateur MinIO dedie **`backup-reader`**, et non les credentials
+root. Sa policy `backup-reader-policy` accorde :
+
+| Action | Portee |
+|--------|--------|
+| `s3:ListBucket`, `s3:GetBucketLocation` | bucket `furious-ducks-backups` |
+| `s3:GetObject` | tout le depot |
+| `s3:PutObject`, `s3:DeleteObject` | **prefixe `locks/` uniquement** |
+
+L'ecriture est limitee aux verrous parce que `restic copy` pose un verrou sur
+le depot **source** et ignore l'option `--no-lock` (cf. restic/restic#3518) :
+une policy strictement en lecture ferait echouer la copie. Les donnees de
+sauvegarde (`data/`, `index/`, `snapshots/`, `config`) restent donc non
+modifiables et non supprimables depuis le poste. Un poste compromis ne peut
+que lire des blobs chiffres ; l'acces est revocable et journalise cote MinIO
+(CST 3.4c).
+
+Creation de l'utilisateur (l'UI d'administration ayant ete retiree des
+releases MinIO recentes, tout passe par `mc`) :
+
+```bash
+docker exec -it common-minio-ci sh
+mc alias set local http://localhost:9000 <MINIO_ROOT_USER> <MINIO_ROOT_PASSWORD>
+mc admin policy create local backup-reader-policy /tmp/policy.json
+mc admin user add local backup-reader <SECRET>
+mc admin policy attach local backup-reader-policy --user backup-reader
+```
+
+Le script applique aussi la meme retention GFS au depot local et y execute un
+`restic check` : la copie hors site est verifiee independamment du controle
+hebdomadaire du VPS.
+
+**Declenchement** : manuel, par contrainte d'espace disque sur le poste. La
+planification quotidienne prevue par le CST (05h00, apres la sauvegarde de
+02h00) est ecrite en commentaire en fin de script, prete a etre activee.
 
 **Taches planifiees (via Ofelia)** :
 
@@ -75,7 +120,7 @@ infrastructure/backup/
 
 | Parametre       | Valeur                     |
 |-----------------|----------------------------|
-| Image           | `minio/minio:RELEASE.2024-09-13T20-26-02Z` |
+| Image           | `minio/minio:RELEASE.2025-09-07T16-13-09Z` |
 | Volume          | `minio-data`               |
 | Port API        | 9000                       |
 | Port Console    | 9001                       |

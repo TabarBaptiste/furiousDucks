@@ -34,7 +34,7 @@ services:
   #   - minio.wk-archi-o24a-4-5-g1.fr  -> Console (port 9001)
   # ---------------------------------------------------------------------------
   minio:
-    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: common-minio-ci
     command: server /data --console-address ":9001"
     environment:
