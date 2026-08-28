@@ -183,7 +183,7 @@ HTTP_STATUS="$(curl -sf -o /dev/null -w "%{http_code}" \
   "${GITLAB_URL}/api/v4/projects/${GITLAB_USER}%2F${PROJECT_NAME}" 2>/dev/null || echo "000")"
 
 if [[ "${HTTP_STATUS}" == "200" ]]; then
-  warn "GitLab project '${PROJECT_NAME}' already exists — skipping creation"
+  warn "GitLab project '${PROJECT_NAME}' already exists - skipping creation"
 else
   RESPONSE="$(curl -sf -X POST \
     --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
@@ -290,7 +290,7 @@ Projet géré via le workflow CI/CD Furious Ducks.
 ## Pipeline
 
 Le pipeline est défini dans \`Jenkinsfile\` via la shared library \`furious-ducks-shared-library\`.
-Pour modifier le comportement du pipeline, modifiez uniquement le \`Jenkinsfile\` — aucun accès Jenkins requis.
+Pour modifier le comportement du pipeline, modifiez uniquement le \`Jenkinsfile\` - aucun accès Jenkins requis.
 
 Stack : \`${PROJECT_STACK}\` | Port applicatif : \`${APP_PORT}\`
 
@@ -372,7 +372,7 @@ WEBHOOK_RESPONSE="$(curl -sf -X POST \
     \"enable_ssl_verification\": true
   }" \
   "${GITLAB_URL}/api/v4/projects/${PROJECT_ID}/hooks" 2>/dev/null)" || {
-    warn "Could not create webhook — configure it manually in GitLab"
+    warn "Could not create webhook - configure it manually in GitLab"
     WEBHOOK_RESPONSE="{}"
   }
 
@@ -416,8 +416,8 @@ HTTP_CODE="$(curl -sf -o /dev/null -w "%{http_code}" \
 
 case "${HTTP_CODE}" in
   200|201) ok "Jenkins Multibranch Pipeline '${PROJECT_NAME}' created" ;;
-  400)     warn "Jenkins job '${PROJECT_NAME}' already exists — skipping creation" ;;
-  *)       warn "Jenkins returned HTTP ${HTTP_CODE} — create the job manually (see Step 5.4 in 00-getting-started.md)" ;;
+  400)     warn "Jenkins job '${PROJECT_NAME}' already exists - skipping creation" ;;
+  *)       warn "Jenkins returned HTTP ${HTTP_CODE} - create the job manually (see Step 5.4 in 00-getting-started.md)" ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -433,7 +433,7 @@ HTTP_CODE="$(curl -sf -o /dev/null -w "%{http_code}" \
 if [[ "${HTTP_CODE}" =~ ^2 ]]; then
   ok "Branch scan triggered"
 else
-  warn "Could not trigger scan (HTTP ${HTTP_CODE}) — trigger it manually in Jenkins > ${PROJECT_NAME} > Scan"
+  warn "Could not trigger scan (HTTP ${HTTP_CODE}) - trigger it manually in Jenkins > ${PROJECT_NAME} > Scan"
 fi
 
 # ---------------------------------------------------------------------------

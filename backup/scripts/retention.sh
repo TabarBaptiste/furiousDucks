@@ -29,7 +29,7 @@ LOG_DIR="${LOG_DIR:-/var/log/backup}"
 LOG_FILE="${LOG_DIR}/retention-$(date +%Y%m%d-%H%M%S).log"
 DRY_RUN="${DRY_RUN:-false}"
 
-# Retention policy — GFS (Grandfather-Father-Son)
+# Retention policy - GFS (Grandfather-Father-Son)
 KEEP_DAILY=7
 KEEP_WEEKLY=4
 KEEP_MONTHLY=6

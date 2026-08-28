@@ -194,7 +194,7 @@ push_metrics() {
   now="$(date +%s)"
 
   if [[ ! -d "${TEXTFILE_DIR}" ]]; then
-    log "WARN" "TEXTFILE_DIR '${TEXTFILE_DIR}' not found — Prometheus metrics not written"
+    log "WARN" "TEXTFILE_DIR '${TEXTFILE_DIR}' not found - Prometheus metrics not written"
     return 0
   fi
 
