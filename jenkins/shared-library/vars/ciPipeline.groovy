@@ -8,6 +8,9 @@
 //       projectName : 'my-app',
 //       stack       : 'node',   // 'node' | 'php' | 'python' | 'ruby'
 //       sonarProject: 'my-app',
+//       // Exclusions Sonar ajoutees aux exclusions par defaut de la library
+//       // (le sonar.exclusions du sonar-project.properties est ignore) :
+//       sonarExtraExclusions: ['**/*.stories.tsx'],
 //       deployDev   : true,
 //       deployPreprod: true,
 //       deployProd  : true,
@@ -50,6 +53,10 @@ void call(Map config = [:]) {
     String harborProject  = config.harborProject  ?: 'furious-ducks'
     String imageName      = "${registry}/${harborProject}/${projectName}"
     String sonarProject   = config.sonarProject   ?: projectName
+    // Exclusions Sonar additionnelles, fusionnees avec la liste par defaut.
+    // Le sonar.exclusions du sonar-project.properties du projet est ignore :
+    // l'argument CLI passe par le scanner est prioritaire.
+    List sonarExtraExclusions = config.sonarExtraExclusions ?: []
     String stack          = config.stack           ?: 'node'
 
     // Deployment flags
@@ -275,7 +282,7 @@ void call(Map config = [:]) {
                 }
                 steps {
                     withSonarQubeEnv('SonarQube') {
-                        runSonarAnalysis(stack, sonarProject)
+                        runSonarAnalysis(stack, sonarProject, sonarExtraExclusions)
                     }
                 }
             }
@@ -1497,15 +1504,18 @@ void publishJUnitReports() {
     )
 }
 
-void runSonarAnalysis(String stack, String sonarProject) {
+void runSonarAnalysis(String stack, String sonarProject, List extraExclusions = []) {
+    List<String> exclusions = ['**/node_modules/**', '**/coverage/**', '**/.prisma/**',
+                               '**/dist/**', '**/cypress/**', '**/*.spec.ts', '**/*.cy.ts']
+    exclusions += extraExclusions
+
     List<String> sonarArgsList = [
         "-Dsonar.projectKey=${sonarProject}",
         "-Dsonar.projectName=${sonarProject}",
         "-Dsonar.host.url=${SONAR_HOST_URL}",
         "-Dsonar.login=${SONAR_AUTH_TOKEN}",
         '-Dsonar.javascript.node.maxspace=4096',
-        '-Dsonar.exclusions=**/node_modules/**,**/coverage/**,**/.prisma/**,' +
-            '**/dist/**,**/cypress/**,**/*.spec.ts,**/*.cy.ts'
+        "-Dsonar.exclusions=${exclusions.join(',')}"
     ]
 
     switch (stack) {
@@ -1538,7 +1548,10 @@ void runSonarAnalysis(String stack, String sonarProject) {
 // keeps the fast, non-blocking feedback a branch still under active work needs.
 void waitForQualityGateResult(String deployEnv) {
     boolean blocking = deployEnv in ['preprod', 'prod']
-    Map qualityGate
+    // Surtout pas de type declare ici : waitForQualityGate renvoie un QGStatus
+    // (WaitForQualityGateStep$QGStatus), pas une Map - un type declare
+    // declencherait un cast implicite qui echoue systematiquement.
+    def qualityGate
     try {
         timeout(time: 5, unit: 'MINUTES') {
             qualityGate = waitForQualityGate(abortPipeline: false)
