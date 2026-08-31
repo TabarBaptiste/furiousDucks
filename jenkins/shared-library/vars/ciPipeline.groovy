@@ -132,6 +132,22 @@ void call(Map config = [:]) {
     Map webappBuildArgs      = config.webappBuildArgs      ?: [:]
     Map webappBuildArgsByEnv = config.webappBuildArgsByEnv ?: [:]
 
+    // Whether the webapp image is environment-specific, and must therefore be
+    // rebuilt for PROD rather than promoted from PREPROD.
+    //
+    // The CST (2.4) promises a single image promoted unchanged from DEV to
+    // PROD. That holds for any service that reads its configuration at
+    // startup - the API does. A Next.js build does not: every NEXT_PUBLIC_*
+    // value is inlined into the bundle it emits, so an image built for PREPROD
+    // carries the PREPROD API URL and site URL for good. Promoting it would
+    // point the production frontend at the preprod API, and the participations
+    // of real users at the preprod database.
+    //
+    // Defaults to false, so projects whose frontend image is environment-
+    // agnostic keep the promotion path exactly as it was. Next.js projects
+    // set it to true.
+    boolean webappIsEnvSpecific = config.webappIsEnvSpecific ?: false
+
     // Front-end domain per environment, so the API's FRONTEND_URL/CORS_ORIGINS and
     // the webapp's NEXT_PUBLIC_API_URL can be derived from the target environment
     // instead of being hard-coded to DEV by the calling Jenkinsfile.
@@ -338,13 +354,15 @@ void call(Map config = [:]) {
             // never consumed. It also filled the workspace, inflating the
             // Docker build context to ~1 GB and invalidating the COPY layer.
             //
-            // PROD is excluded: a tag build promotes the already-built, already-
-            // scanned PREPROD image instead of rebuilding from source (see
-            // "Promote Image" below) - build once, deploy everywhere.
+            // PROD is normally excluded: a tag build promotes the already-built,
+            // already-scanned PREPROD image instead of rebuilding from source
+            // (see "Promote Image" below) - build once, deploy everywhere.
+            // It is included only when webappIsEnvSpecific says the frontend
+            // bundle cannot be reused across environments.
             // =================================================================
             stage('Docker Build') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] || (webappIsEnvSpecific && env.DEPLOY_ENV == 'prod') }
                 }
                 steps {
                     script {
@@ -406,11 +424,13 @@ void call(Map config = [:]) {
             // PROD excluded: the tag build promotes the PREPROD image bit-for-
             // bit (see "Promote Image"), and that same image was already
             // scanned when it was built for PREPROD - rescanning identical
-            // bits adds nothing.
+            // bits adds nothing. When webappIsEnvSpecific is set the PROD image
+            // is freshly built instead, so it has never been scanned and must
+            // be.
             // =================================================================
             stage('Trivy Scan') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] || (webappIsEnvSpecific && env.DEPLOY_ENV == 'prod') }
                 }
                 steps {
                     trivyScan(env.DOCKER_IMAGE, env.IMAGE_TAG, env.HOST_WORKSPACE)
@@ -432,11 +452,13 @@ void call(Map config = [:]) {
             // =================================================================
             // STAGE: Docker Push (to Harbor registry)
             // PROD excluded: "Promote Image" below does its own push, of the
-            // re-tagged PREPROD image rather than one built in this run.
+            // re-tagged PREPROD image rather than one built in this run. Unless
+            // webappIsEnvSpecific is set, in which case this run did build the
+            // PROD frontend image and has to push it itself.
             // =================================================================
             stage('Docker Push') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
+                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] || (webappIsEnvSpecific && env.DEPLOY_ENV == 'prod') }
                 }
                 steps {
                     pushDockerImage(registry, env.DOCKER_IMAGE, env.IMAGE_TAG, env.DEPLOY_ENV == 'dev')
@@ -462,17 +484,29 @@ void call(Map config = [:]) {
             // this same commit, instead of rebuilding from source. The source
             // tag is reconstructed the same way "Prepare" builds it for a
             // branch build: "main-<short-sha>".
+            //
+            // The frontend is skipped when webappIsEnvSpecific is set: its
+            // PREPROD image carries PREPROD URLs baked into the bundle, so it
+            // was rebuilt for PROD earlier in this run and pushed by "Docker
+            // Push". The backend is always promoted - it reads its whole
+            // configuration from the environment at startup, so the very bits
+            // validated on PREPROD are the ones that run in PROD.
             // =================================================================
             stage('Promote Image') {
                 when {
-                    expression { return env.DEPLOY_ENV == 'prod' }
+                    expression { return env.DEPLOY_ENV == 'prod' && !(webappIsEnvSpecific && !hasApi) }
                 }
                 steps {
                     script {
                         String preprodTag = "main-${env.GIT_COMMIT_SHORT}"
-                        echo "Promoting ${env.DOCKER_IMAGE}:${preprodTag} to ${env.IMAGE_TAG}"
-                        promoteImage(registry, env.DOCKER_IMAGE, preprodTag, env.IMAGE_TAG)
+                        if (webappIsEnvSpecific) {
+                            echo "Frontend rebuilt for PROD (webappIsEnvSpecific), not promoted"
+                        } else {
+                            echo "Promoting ${env.DOCKER_IMAGE}:${preprodTag} to ${env.IMAGE_TAG}"
+                            promoteImage(registry, env.DOCKER_IMAGE, preprodTag, env.IMAGE_TAG)
+                        }
                         if (hasApi) {
+                            echo "Promoting ${env.DOCKER_IMAGE}-api:${preprodTag} to ${env.IMAGE_TAG}"
                             promoteImage(registry, "${env.DOCKER_IMAGE}-api", preprodTag, env.IMAGE_TAG)
                         }
                     }
