@@ -187,6 +187,30 @@ sonar.php.tests.reportPath=phpunit.xml
 sonar.python.coverage.reportPaths=coverage.xml
 ```
 
+> **Attention : `sonar.exclusions` du projet est ignore.**
+> La shared library `ciPipeline` passe `-Dsonar.exclusions=...` en argument CLI au
+> `sonar-scanner`, et un argument CLI est prioritaire sur `sonar-project.properties`.
+> Modifier cette cle cote projet n'a donc aucun effet.
+>
+> Pour ajouter des exclusions specifiques a un projet, utilise le parametre
+> `sonarExtraExclusions` du `ciPipeline` dans le Jenkinsfile — il est fusionne avec
+> la liste par defaut de la library :
+>
+> ```groovy
+> ciPipeline(
+>     projectName : 'mon-app',
+>     sonarProject: 'mon-app',
+>     sonarExtraExclusions: ['**/*.stories.tsx', '**/mocks/**']
+> )
+> ```
+>
+> Exclusions par defaut appliquees a tous les projets :
+> `**/node_modules/**`, `**/coverage/**`, `**/.prisma/**`, `**/dist/**`,
+> `**/cypress/**`, `**/*.spec.ts`, `**/*.cy.ts`.
+> Ces exclusions par defaut ne peuvent pas etre retirees depuis un projet ; elles se
+> modifient dans `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy`
+> (fonction `runSonarAnalysis`), ce qui impacte tous les projets clients.
+
 ### 4.2 Consulter les resultats d'un projet
 
 1. **Projects > <ton projet>**
