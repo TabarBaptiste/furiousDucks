@@ -30,7 +30,6 @@ credentials-binding
 ssh-credentials
 
 # --- UI / UX ---------------------------------------------------------------
-blueocean
 timestamper
 
 # --- Code Quality ----------------------------------------------------------

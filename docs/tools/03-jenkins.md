@@ -52,7 +52,7 @@
 - `sonar` : integration SonarQube Scanner
 - `prometheus` : exposition des metriques Jenkins
 - `role-strategy` : gestion RBAC fine
-- Autres : pipeline, credentials, blueocean, etc.
+- Autres : pipeline, credentials, etc.
 
 ### Credentials Store
 
@@ -117,7 +117,7 @@ Grace au JCasC, **le wizard d'installation est skippe** et l'admin est deja cree
 
 ### 3.4 Verifier les plugins
 
-**Manage Jenkins > Plugins > Installed plugins**. Tu dois voir tous les plugins de `infrastructure/jenkins/plugins.txt` (git, gitlab-plugin, docker-workflow, sonar, prometheus, role-strategy, blueocean, etc.).
+**Manage Jenkins > Plugins > Installed plugins**. Tu dois voir tous les plugins de `infrastructure/jenkins/plugins.txt` (git, gitlab-plugin, docker-workflow, sonar, prometheus, role-strategy, etc.).
 
 ### 3.5 Configurer les credentials (etape critique)
 
@@ -209,14 +209,13 @@ Recommande pour les projets reels.
 ### 4.2 Lancer un build manuellement
 
 1. Ouvrir le job > selectionner la branche > **Build Now**
-2. Suivre l'avancement dans **Build History > Console Output** ou **Open Blue Ocean** pour la vue moderne
+2. Suivre l'avancement dans **Build History > Console Output**
 
 ### 4.3 Comprendre l'echec d'un build
 
 1. Cliquer sur le build rouge
 2. **Console Output** : log complet
 3. Pour les pipelines : **Pipeline Steps** : voir quelle etape a echoue
-4. **Blue Ocean** : vue visuelle des stages
 
 ### 4.4 Approuver un deploiement PROD
 
