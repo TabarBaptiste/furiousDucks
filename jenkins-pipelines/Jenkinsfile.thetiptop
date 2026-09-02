@@ -4,9 +4,16 @@
 // Full CI/CD pipeline for the The Tip Top application.
 //
 // Pipeline flow:
-//   develop branch  -> Lint, Test, SonarQube, Docker Build/Push, Deploy DEV
-//   main branch     -> All of the above + SAST, Gitleaks, E2E, K6, Deploy PREPROD
-//   semver tag      -> All of the above + Approval + Blue/Green Deploy PROD
+//   feature/release/hotfix -> Lint, Unit Tests, Gitleaks
+//   develop branch  -> idem + SonarQube/Quality Gate, Docker Build/Push, Deploy DEV
+//   main branch     -> idem + Semgrep SAST, Deploy PREPROD, E2E, OWASP ZAP
+//   semver tag      -> Promote Image, Approval, migrations, Blue/Green Deploy PROD
+//                      (rien n'est reconstruit ni re-analyse : build once,
+//                       deploy everywhere - sauf le front, voir
+//                       webappIsEnvSpecific ci-dessous)
+//
+// Les tests de charge k6 ne sont pas dans ce pipeline : job planifie a part,
+// voir Jenkinsfile.k6.thetiptop.
 // =============================================================================
 
 @Library('furious-ducks-shared-library') _
@@ -56,6 +63,14 @@ ciPipeline(
 
     // Path to the Dockerfile (monorepo layout: app lives under webapp/)
     dockerfile    : 'webapp/Dockerfile',
+
+    // Le front est du Next.js : chaque NEXT_PUBLIC_* est fige dans le bundle au
+    // moment du build. L'image construite pour PREPROD porte donc l'URL de
+    // l'API PREPROD pour toujours - la promouvoir telle quelle en PROD ferait
+    // appeler l'API de preproduction par le site de production. Le front est
+    // donc reconstruit pour PROD ; l'API, elle, lit sa configuration au
+    // demarrage et reste promue bit a bit depuis PREPROD.
+    webappIsEnvSpecific: true,
 
     // Backend API (NestJS), deployed alongside the frontend.
     // Wired for DEV, PREPROD and PROD (PROD uses its own dedicated database
