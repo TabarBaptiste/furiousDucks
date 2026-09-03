@@ -388,6 +388,41 @@ Format d'une entree :
   a chaque mise en production d'un projet sans backend. Voir
   `how/02-pipeline-ci-cd.md` section 3.5.
 
+### [2026-09-03] Seuil de couverture local (Jest) durci au-dela du plancher du CST
+
+- **Statut** : A REPORTER
+- **Section CST** : 4., tableau des criteres de passage (l.1389) « Quality Gate
+  SonarQube ? | Automatique | Maintient les standards de qualite de l'agence
+  (couverture > 70%, pas de vulnerabilites critiques) » ; 3.2, specificites
+  PROD (l.1491) « Quality Gate strict | Couverture >= 70%, 0 vulnerabilite
+  critique, rating A » ; indicateurs de reussite (l.3055) « Couverture de
+  tests (SonarQube) >= 70% (nouveaux projets) ».
+- **Le CST dit** : un seuil de couverture unique, 70%, presente comme le
+  standard de l'agence et verifie par le Quality Gate SonarQube — sans
+  distinguer un plancher organisationnel d'un objectif par projet.
+- **Le VPS fait** (perimetre `thetiptop`) : en plus du Quality Gate
+  SonarQube, chaque sous-projet declare son propre seuil local dans son
+  `jest.config.js`, verifie des le stage `Unit Tests`, avant meme l'analyse
+  Sonar. Ces seuils sont volontairement plus stricts que le plancher de 70%
+  et suivent la couverture reellement atteinte, en cliquet (jamais abaisses,
+  releves au fil des tests ajoutes) : `api/jest.config.js` est a
+  90/75/90/90 (statements/branches/functions/lines) pour une couverture
+  reelle de 95.88/81.61/92.67/96.15 ; `webapp/jest.config.js` vient d'etre
+  releve de 70/65/68/70 a 88/87/84/89, a la suite de l'ajout de tests sur
+  `verification-step.tsx`, `lib/api.ts` et `header.tsx` qui a porte la
+  couverture reelle du webapp de 80.1/77.04/76.53/81.53 a
+  90.58/91.05/87.75/92.17. Le CST ne mentionne ni ce mecanisme de seuil
+  local en cliquet, ni le fait que 70% n'est ici qu'un minimum.
+- **Correction a apporter** : preciser dans le CST que 70% est un plancher
+  organisationnel verifie par le Quality Gate SonarQube, et que chaque
+  projet peut (et ici, doit) le durcir localement via un seuil Jest en
+  cliquet aligne sur sa couverture reelle, sans remettre en cause le seuil
+  Sonar de reference.
+- **Pourquoi** : sans cette precision, une future revision du CST risque de
+  lire 70% comme un plafond a ne pas depasser plutot qu'un minimum a ne
+  jamais repasser sous — et ne trace pas que `thetiptop` applique deja un
+  standard de couverture plus exigeant que celui de l'agence.
+
 ---
 
 ## Ecarts reportes
