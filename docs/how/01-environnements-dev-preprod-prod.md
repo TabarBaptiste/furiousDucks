@@ -22,10 +22,13 @@ deploiement PROD - avec en plus une approbation manuelle (stage `Approval
 PROD`, soumissible par `admin` ou `maintainers`).
 
 Sur une branche qui ne deploie nulle part, `DEPLOY_ENV` reste vide : les
-stages Docker Build / Trivy / Gitleaks / SonarQube / Quality Gate / Deploy
-sont tous ignores (`when { expression { env.DEPLOY_ENV in [...] } } }`). Seuls
-`Lint` et `Unit Tests` restent inconditionnels, pour donner un retour rapide
-sur une branche jetable avant sa Merge Request.
+stages Docker Build / Trivy / Semgrep / SonarQube / Quality Gate / Deploy sont
+tous ignores. Restent `Lint`, `Unit Tests` et `Gitleaks`, pour donner un retour
+rapide sur une branche jetable avant sa Merge Request - et, pour Gitleaks,
+detecter un secret avant qu'il ne se propage. SonarQube en est exclu par
+contrainte de licence : l'edition Community ne sait pas analyser par branche
+et ecraserait les metriques du projet. Voir `02-pipeline-ci-cd.md` section 2
+pour la matrice complete.
 
 ## 2. Tableau comparatif
 
@@ -35,8 +38,9 @@ sur une branche jetable avant sa Merge Request.
 | Domaine | `<projet>-dev.wk-archi-o24a-4-5-g1.fr` (+ `<projet>-api-dev.wk-...` pour l'API) | `<projet>-preprod.wk-archi-o24a-4-5-g1.fr` (+ `<projet>-api-preprod.wk-...`) | frontend : `<projet>.dsp5-archi-o24a-4-5-g1.fr` / **API : `<projet>-api.wk-archi-o24a-4-5-g1.fr`** (la zone `dsp5` n'heberge que le frontend et n'a pas de wildcard TLS) |
 | Methode de deploiement | remplacement simple du conteneur | remplacement simple du conteneur | Blue/Green (`deployBlueGreen.groovy`) |
 | Approbation manuelle | non | non | oui (stage `Approval PROD`) |
-| SonarQube / Quality Gate | oui | oui | oui (herite du build qui a promu le tag) |
-| Trivy / Gitleaks | oui | oui | oui |
+| SonarQube / Quality Gate | oui | oui | herite du build `main` qui a promu le tag |
+| Gitleaks / Semgrep (source) | Gitleaks seul | oui | herite du build `main` (source identique) |
+| Trivy (image) | oui | oui | herite, + re-scan quotidien Harbor ; rejoue si `webappIsEnvSpecific` |
 | E2E (Playwright par defaut, Cypress au choix via `e2eFramework`) | non | oui, contre PREPROD deploye | non (deja valide en PREPROD) |
 | OWASP ZAP baseline | non | oui, contre PREPROD deploye | non |
 | K6 (perf) | non | oui, job autonome planifie (`Jenkinsfile.k6`, `H 2 * * 1`) | non |

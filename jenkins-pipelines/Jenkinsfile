@@ -39,5 +39,12 @@ ciPipeline(
     appPort       : 3000,
 
     // Path to the Dockerfile relative to the repo root (default: 'Dockerfile')
-    dockerfile    : 'Dockerfile'
+    dockerfile    : 'Dockerfile',
+
+    // A activer si l'image du front fige de la configuration d'environnement au
+    // build (typiquement les NEXT_PUBLIC_* d'un projet Next.js) : elle est alors
+    // reconstruite pour la PROD au lieu d'etre promue depuis la PREPROD, dont
+    // elle porterait les URL. A laisser a false pour toute image qui lit sa
+    // configuration au demarrage.
+    webappIsEnvSpecific: false
 )

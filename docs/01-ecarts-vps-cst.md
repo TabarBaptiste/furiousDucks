@@ -190,19 +190,40 @@ Format d'une entree :
   garantie que PROD execute l'image bit-a-bit identique a celle validee en
   PREPROD. Voir `how/02-pipeline-ci-cd.md` sections 3.2 et 3.4.
 
-### [2026-08-28] Gitleaks bloque desormais aussi le chemin PROD
+### [2026-08-28] Gitleaks et Semgrep retires du chemin PROD
+
+> Cette entree remplace « Gitleaks bloque desormais aussi le chemin PROD »
+> (meme date). Decision revue le 2026-09-02.
 
 - **Statut** : A REPORTER
-- **Section CST** : 4.2 (l.468) « Gitleaks ... bloque le pipeline aux stades
-  DEV et PREPROD si des secrets exposes sont trouves »
-- **Le CST dit** : le blocage Gitleaks en pipeline couvre DEV et PREPROD.
-- **Le VPS fait** : le stage `Gitleaks` s'execute aussi sur le chemin PROD
-  (`DEPLOY_ENV in ['dev', 'preprod', 'prod']`), avant `Promote Image`.
-- **Correction a apporter** : etendre la phrase a « DEV, PREPROD et PROD ».
-- **Pourquoi** : couverture volontairement elargie lors de la remise a plat
-  des stages (phase 3) — aucune raison de laisser passer un secret sur le
-  seul chemin qui publie en production sous pretexte qu'il ne reconstruit pas
-  l'image. Cout marginal (quelques secondes).
+- **Section CST** : 4.2 (l.468) Gitleaks « bloque le pipeline aux stades DEV et
+  PREPROD » ; tableau 3.2 (l.1490) « Scan securite complet : Trivy (image) +
+  Gitleaks (secrets) + OWASP - derniere barriere de securite avant la
+  production »
+- **Le CST dit** : un scan de securite complet constitue la derniere barriere
+  avant la production, au moment de la mise en production.
+- **Le VPS fait** : `Gitleaks` et `Semgrep SAST` avaient ete etendus au chemin
+  PROD le 2026-08-28 ; ils en sont retires. Les deux operent sur **l'arbre
+  source**, or un build de tag ne le modifie pas : c'est le meme commit que
+  celui deja construit et scanne sur `main`, et l'existence de l'image
+  `main-<sha>` dans Harbor - sans laquelle `Promote Image` echoue - le prouve.
+  Le verdict ne pouvait donc etre qu'identique. Semgrep, qui ne pose qu'un
+  `unstable`, n'avait de surcroit aucun pouvoir d'arret sur le deploiement
+  qu'il precedait. La « derniere barriere » decrite par le CST est celle du
+  build PREPROD du commit promu (Trivy sur l'image + Gitleaks + OWASP ZAP),
+  completee par le **re-scan quotidien de Harbor** pour les CVE apparues apres
+  coup (`tools/04-harbor.md` section 3.8).
+- **Correction a apporter** : reformuler le tableau 3.2 (l.1490) pour rattacher
+  la barriere securite au build PREPROD plutot qu'au moment du tag, et renvoyer
+  vers le re-scan Harbor pour la veille CVE continue. En 4.2, conserver « DEV
+  et PREPROD » et y ajouter les branches de travail (voir entree du 2026-09-02).
+- **Pourquoi** : deux stages de plusieurs minutes dont le resultat etait
+  demontrable a l'avance, sur un agent Jenkins bloque par
+  `disableConcurrentBuilds`, pour un pouvoir de blocage nul (Semgrep) ou sans
+  objet (Gitleaks). Le seul controle dont le verdict pouvait reellement changer
+  entre le build `main` et le tag est Trivy - et c'est precisement celui que
+  Harbor rejoue tous les jours, sur toutes les images, sans immobiliser la CI.
+  Voir `how/02-pipeline-ci-cd.md` section 3.4.
 
 ### [2026-08-28] Retention Harbor : exception non ecrite pour les tags de release
 
@@ -252,6 +273,120 @@ Format d'une entree :
   (phase 3), pas introduit par les phases 3-5 elles-memes — mais laisse tel
   quel, le CST promet une capacite de restauration qui n'existe pas et une
   qualite de recette ("donnees realistes") non garantie sur PREPROD.
+
+### [2026-09-02] Approbation PROD deplacee avant les migrations de base
+
+- **Statut** : A REPORTER
+- **Section CST** : 7.2 (l.1588) « Pourquoi une approbation manuelle pour la
+  PROD ? » ; tableau comparatif des environnements (l.1566) « Validation +
+  deploiements controles »
+- **Le CST dit** : une approbation humaine precede la mise en production, comme
+  garantie de responsabilite, de conformite et de choix du moment.
+- **Le VPS fait** : jusqu'a cette date, le stage `Approval PROD` etait place
+  **apres** `Ensure Database` et `Run Prisma Migrations`. Le schema de la base
+  de production etait donc migre avant que quiconque ait approuve quoi que ce
+  soit : un refus (ou un timeout) laissait la base PROD en avance sur
+  l'application restee en place, et `scripts/rollback.sh` remettait l'ancien
+  conteneur devant un schema qu'il ne connaissait pas. Le stage est desormais
+  place entre `Promote Image` et `Ensure Database`.
+- **Correction a apporter** : ajouter en 7.2 que l'approbation est positionnee
+  sur la frontiere entre les operations inertes (preparation d'un artefact dans
+  Harbor) et les operations irreversibles (migration de schema, bascule de
+  trafic), et non simplement « avant le deploiement ».
+- **Pourquoi** : une migration Prisma n'a pas de retour arriere automatique.
+  C'etait le seul point du pipeline ou un « non » humain arrivait apres un
+  effet de bord non annulable, ce qui privait l'approbation de sa raison
+  d'etre. Voir `how/02-pipeline-ci-cd.md` section 3.7.
+
+### [2026-09-02] Front Next.js reconstruit pour la PROD (exception au build once)
+
+- **Statut** : ASSUME
+- **Section CST** : 2.4 (l.436) « la meme image construite une fois peut etre
+  reutilisee a l'identique a travers les environnements sans reconstruction »
+- **Le CST dit** : une image unique est promue sans reconstruction, de DEV a
+  PROD.
+- **Le VPS fait** : ce principe est conserve pour l'API (NestJS lit sa
+  configuration au demarrage) mais **abandonne pour le front Next.js**. Chaque
+  variable `NEXT_PUBLIC_*` est inlinee dans le bundle JavaScript au moment du
+  `next build` : l'image construite pour PREPROD porte definitivement l'URL de
+  l'API PREPROD. Le drapeau `webappIsEnvSpecific: true` (active sur
+  `thetiptop`) fait donc reconstruire, scanner et pousser le front pour la
+  PROD ; l'API, elle, reste promue bit a bit.
+- **Correction a apporter** : preciser en 2.4 que la promotion sans
+  reconstruction s'applique aux images dont la configuration est lue au
+  demarrage, et documenter l'exception des bundles front a configuration figee
+  au build.
+- **Pourquoi** : sans cette exception, le site de production appelait l'API de
+  preproduction - donc ecrivait les participations de vrais utilisateurs dans
+  la base de preproduction, quand le CORS de l'API PREPROD ne rejetait pas
+  purement et simplement l'origine PROD. L'identifiant Google Analytics de
+  production (`webappBuildArgsByEnv`) n'etait par ailleurs jamais compile.
+  Voir `how/02-pipeline-ci-cd.md` section 3.9.
+
+### [2026-09-02] Tests unitaires et Gitleaks joues des les branches de travail
+
+- **Statut** : A REPORTER
+- **Section CST** : 4. (l.442) « le pipeline echoue automatiquement en cas
+  d'echec » des tests ; 4.2 (l.468) Gitleaks « bloque le pipeline aux stades
+  DEV et PREPROD »
+- **Le CST dit** : les tests et la detection de secrets s'appliquent aux stades
+  de deploiement (DEV, PREPROD).
+- **Le VPS fait** : `Unit Tests` et `Gitleaks` s'executent desormais aussi sur
+  `feature/*`, `release/*` et `hotfix/*`. Jusqu'ici une branche de travail ne
+  declenchait que `Lint` : aucun test automatise ne tournait avant la Merge
+  Request vers `develop`, et un secret commite n'etait detecte qu'apres cette
+  fusion. `SonarQube Analysis` et `Quality Gate` restent exclus de ces branches
+  (voir entree suivante).
+- **Correction a apporter** : etendre les deux passages aux branches de
+  travail, et distinguer explicitement les controles joues des la branche
+  (Lint, Unit Tests, Gitleaks) de ceux reserves aux branches deployantes.
+- **Pourquoi** : les dependances sont deja installees pour `Lint`, le cout
+  marginal est negligeable, et c'etait jusqu'ici le seul retour automatise
+  qu'une branche obtenait avant sa Merge Request - la relecture humaine n'est
+  pas un substitut a une suite de tests. Pour Gitleaks, la valeur du controle
+  depend strictement de sa precocite : un secret pousse sur une branche est
+  deja compromis et devra etre revoque. Voir `how/02-pipeline-ci-cd.md`
+  sections 3.1 et 3.3.
+
+### [2026-09-02] SonarQube absent des branches de travail : limite de l'edition Community
+
+- **Statut** : ASSUME
+- **Section CST** : 4. (l.444) « SonarQube Community Edition » et quality gates
+  « avant tout deploiement en PREPROD ou en PROD » ; 5.2 (l.1029) « quality
+  gates : linting, tests et scans de securite obligatoires avant tout
+  deploiement »
+- **Le CST dit** : SonarQube est utilise en edition Community, sans que la
+  consequence de ce choix sur la couverture par branche soit enoncee.
+- **Le VPS fait** : `SonarQube Analysis` et `Quality Gate` ne tournent que sur
+  `develop` et `main`. L'edition Community ne supporte pas l'analyse par
+  branche : toute analyse, quelle que soit sa branche d'origine, ecrit dans le
+  projet unique et en ecrase les metriques. Analyser une `feature/*` ferait
+  donc mentir le Quality Gate de `develop` et de `main`.
+- **Correction a apporter** : mentionner explicitement en 4. que l'edition
+  Community n'offre pas d'analyse par branche, et que la portee des quality
+  gates SonarQube est de ce fait limitee aux branches deployantes.
+- **Pourquoi** : contrainte de licence, pas de conception - la lever suppose
+  une edition Developer (payante). C'est aussi la raison pour laquelle
+  l'extension de la couverture aux branches de travail (entree precedente)
+  s'arrete a Lint, Unit Tests et Gitleaks. Voir `tools/05-sonarqube.md` et
+  `how/02-pipeline-ci-cd.md` section 3.2.
+
+### [2026-09-02] Install Dependencies saute sur le tag pour les projets sans API
+
+- **Statut** : A REPORTER
+- **Section CST** : 3.2, tableau des etapes du pipeline (l.1464 et suivantes)
+- **Le CST dit** : l'installation des dependances est une etape du pipeline,
+  sans condition d'environnement.
+- **Le VPS fait** : sur le chemin tag, `Install Dependencies` n'est desormais
+  execute que si le projet declare une API (`hasApi`). Son unique consommateur
+  y est `Run Prisma Migrations`, qui resout le CLI Prisma a la version du
+  lockfile ; Lint, Unit Tests et SonarQube sont tous absents de ce chemin. Sans
+  API, le stage installait donc l'integralite des dependances sans qu'aucun
+  stage ne les lise.
+- **Correction a apporter** : indiquer la condition dans le tableau des etapes.
+- **Pourquoi** : quelques dizaines de secondes et un workspace rempli pour rien
+  a chaque mise en production d'un projet sans backend. Voir
+  `how/02-pipeline-ci-cd.md` section 3.5.
 
 ---
 

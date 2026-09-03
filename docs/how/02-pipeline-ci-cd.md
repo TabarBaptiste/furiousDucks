@@ -29,25 +29,28 @@ evite que ces deux ecritures divergent avec le temps.
 | Stage | feature/* | develop (DEV) | main (PREPROD) | tag v* (PROD) |
 |---|---|---|---|---|
 | Prepare | oui | oui | oui | oui |
-| Install Dependencies | oui | oui | oui | oui (voir 3.5) |
+| Install Dependencies | oui | oui | oui | oui si API (voir 3.5) |
 | Lint | oui | oui | oui | non |
-| Unit Tests | non | oui | oui | non |
+| Unit Tests | oui | oui | oui | non |
+| Gitleaks | oui | oui | oui | non |
 | SonarQube Analysis | non | oui | oui | non |
 | Quality Gate | non | oui (non bloquant) | oui (bloquant) | non |
-| Gitleaks | non | oui | oui | oui |
-| Semgrep SAST | non | non | oui | oui |
-| Docker Build (+ API) | non | oui | oui | non |
-| Trivy Scan (+ API) | non | oui | oui | non |
-| Docker Push (+ API) | non | oui | oui | non |
+| Semgrep SAST | non | non | oui | non |
+| Docker Build (+ API) | non | oui | oui | front seul si `webappIsEnvSpecific` |
+| Trivy Scan (+ API) | non | oui | oui | front seul si `webappIsEnvSpecific` |
+| Docker Push (+ API) | non | oui | oui | front seul si `webappIsEnvSpecific` |
 | Promote Image | non | non | non | oui |
+| **Approval PROD** | non | non | non | **oui** |
 | Ensure Database | non | oui | oui | oui |
 | Run Prisma Migrations | non | oui | oui | oui |
 | Deploy DEV (+ API) | non | oui | non | non |
 | Deploy PREPROD (+ API) | non | non | oui | non |
 | E2E Tests (Playwright/Cypress) | non | non | oui | non |
 | OWASP ZAP | non | non | oui (si `runZap`) | non |
-| Approval PROD | non | non | non | oui |
 | Deploy PROD (+ API), Blue/Green | non | non | non | oui |
+
+L'ordre des lignes est celui d'execution. `Approval PROD` est volontairement
+place **avant** `Ensure Database` : voir 3.7.
 
 ## 3. Justification par stage
 
@@ -58,31 +61,44 @@ evite que ces deux ecritures divergent avec le temps.
 - **Install Dependencies** : voir 3.5, cas particulier du tag.
 - **Lint** : retour rapide et peu couteux (quelques secondes), utile meme sur
   une branche jetable avant sa Merge Request. Exclu du tag (3.5).
+- **Unit Tests** : joues des `feature/*`. Les dependances sont deja installees,
+  le cout marginal, et c'est le **seul retour automatise** qu'une branche de
+  travail obtient avant sa Merge Request - la relecture humaine n'est pas un
+  substitut a une suite de tests. Exclu du tag : meme commit, deja teste sur
+  `main`.
+- **Gitleaks** : voir 3.3.
 
 ### 3.2 Reserves aux branches qui deploient (dev, preprod)
 
-- **Unit Tests, SonarQube Analysis, Quality Gate** : retires de `feature/*`
-  parce qu'aucun artefact n'en sort avant la Merge Request vers `develop` -
-  c'est elle qui sert de controle. Retires du tag parce que le commit a deja
-  ete teste et analyse au moment du build sur `main` (voir Promote Image, 3.4).
-  Le Quality Gate est desormais **bloquant** sur `preprod`, **non bloquant**
-  (`unstable`) sur `dev` : une branche encore en developpement actif garde un
-  retour rapide, PREPROD (qui alimente la promotion vers PROD) ne laisse plus
-  passer un gate en echec sans le signaler.
+- **SonarQube Analysis, Quality Gate** : absents de `feature/*` pour une raison
+  technique, pas de cout : SonarQube tourne en **edition Community**, qui ne
+  connait pas l'analyse par branche. Toute analyse, quelle que soit sa branche
+  d'origine, ecrase les metriques du projet unique - scanner une `feature/*`
+  ferait donc mentir le Quality Gate de `develop` et de `main`. Absents du tag
+  parce que le commit a deja ete analyse sur `main` (voir Promote Image, 3.4).
+  Le Quality Gate est **bloquant** sur `preprod`, **non bloquant** (`unstable`)
+  sur `dev` : une branche encore en developpement actif garde un retour rapide,
+  PREPROD (qui alimente la promotion vers PROD) ne laisse plus passer un gate
+  en echec sans le signaler.
 - **Docker Build / Trivy Scan / Docker Push** (+ variantes API) : construits et
-  scannes uniquement sur `dev`/`preprod`. Le tag ne reconstruit rien (3.4).
+  scannes uniquement sur `dev`/`preprod`. Le tag ne reconstruit rien (3.4),
+  a l'exception du front lorsque `webappIsEnvSpecific` est actif (3.9).
 
-### 3.3 Barriere securite avant toute image (dev, preprod, prod)
+### 3.3 Barriere securite avant toute image
 
-- **Gitleaks** : tourne avant `Docker Build`, sur toutes les branches qui
-  produisent ou promeuvent une image (y compris le tag, qui ne construit pas
-  mais publie quand meme un artefact final). Anciennement place apres
-  `Docker Push` : un secret n'etait alors detecte qu'une fois l'image deja
-  publiee sur Harbor.
-- **Semgrep SAST** : sur `preprod` et `prod` seulement (pas `dev`, deja
-  couvert par SonarQube ; pas `feature/*`, aucun artefact ne sort). Remonte
-  avant le build, la ou il peut encore bloquer quelque chose - il tournait
-  avant apres `Deploy DEV`, soit trop tard pour empecher un deploiement.
+- **Gitleaks** (toutes branches sauf tag) : tourne avant `Docker Build`.
+  Anciennement place apres `Docker Push` : un secret n'etait alors detecte
+  qu'une fois l'image deja publiee sur Harbor. C'est le seul controle dont la
+  valeur depend strictement de sa **precocite** : un secret pousse sur une
+  `feature/*` est deja compromis et devra etre revoque - l'apprendre a la
+  Merge Request est deja tard, l'apprendre au tag n'a plus aucun sens. D'ou sa
+  presence des les branches de travail, et son absence du chemin tag (3.4).
+- **Semgrep SAST** (`preprod` uniquement) : porte d'entree vers la production
+  et dernier point ou l'arbre source change encore. Ecarte de `dev` (rythme des
+  pushs, deja couvert par SonarQube), de `feature/*` (aucun artefact ne sort)
+  et du tag (3.4). Remonte avant le build, la ou il peut encore bloquer quelque
+  chose - il tournait avant apres `Deploy DEV`, soit trop tard pour empecher un
+  deploiement. A noter : Semgrep ne pose qu'un `unstable`, jamais un `error`.
 
 ### 3.4 Construction une seule fois (build once, deploy everywhere)
 
@@ -96,15 +112,32 @@ evite que ces deux ecritures divergent avec le temps.
   peut etre pose que sur un commit deja construit et valide sur `main` ; sans
   image `main-<sha>` presente dans Harbor, la promotion echoue - c'est une
   contrainte de process voulue, pas un defaut.
+- **Corollaire : aucun controle sur source n'est rejoue sur le tag.** Lint,
+  Unit Tests, SonarQube, Quality Gate, Gitleaks et Semgrep operent tous sur
+  l'arbre source. Or un build de tag ne modifie pas cet arbre : c'est le meme
+  commit que celui construit sur `main`, et l'existence de l'image
+  `main-<sha>` dans Harbor - sans laquelle la promotion echoue - le prouve.
+  Rejouer ces controles avec les memes regles sur les memes fichiers ne peut
+  produire qu'un verdict identique. Seul Trivy pourrait, lui, changer d'avis
+  (la base CVE evolue apres le build PREPROD) - mais cette surveillance est
+  deja assuree par le **re-scan quotidien de Harbor** (`tools/04-harbor.md`
+  section 3.8), qui couvre toutes les images stockees sans immobiliser un
+  agent Jenkins.
 
 ### 3.5 Cas particulier : Install Dependencies sur le tag
 
 Contrairement a Lint/Unit Tests/Sonar, **Install Dependencies reste actif sur
-le chemin tag**. Raison : `Run Prisma Migrations` tourne aussi en PROD (voir
-3.6) et resout le CLI Prisma depuis les `node_modules` installes par ce
-stage, a la version fixee par le lockfile - une resolution "a la volee" depuis
-un conteneur nu risquerait une derive de version. Le cout est faible (quelques
-dizaines de secondes) au regard du risque evite.
+le chemin tag - mais seulement si le projet a une API**. Raison :
+`Run Prisma Migrations` tourne aussi en PROD (voir 3.6) et resout le CLI Prisma
+depuis les `node_modules` installes par ce stage, a la version fixee par le
+lockfile - une resolution "a la volee" depuis un conteneur nu risquerait une
+derive de version. Le cout est faible (quelques dizaines de secondes) au regard
+du risque evite.
+
+Sans API (`hasApi == false`), ce consommateur disparait et **plus aucun stage
+du chemin tag ne lit les `node_modules`** : Lint, Unit Tests et Sonar en sont
+tous absents. L'installation est donc sautee (`env.DEPLOY_ENV != 'prod' ||
+hasApi`).
 
 ### 3.6 Base de donnees (dev, preprod, prod)
 
@@ -120,8 +153,21 @@ dizaines de secondes) au regard du risque evite.
 
 - **Deploy DEV / Deploy PREPROD** (+ API) : remplacement simple du conteneur,
   chacun sur sa branche (`DEPLOY_ENV == 'dev'` / `'preprod'`).
-- **Approval PROD / Deploy PROD** (+ API), Blue/Green : uniquement sur tag,
-  avec approbation manuelle prealable (`admin`/`maintainers`). Le Blue/Green
+- **Approval PROD** : uniquement sur tag, `admin`/`maintainers`. Sa position
+  dans le pipeline est un choix de conception : il est place **juste apres
+  `Promote Image` et juste avant `Ensure Database`**, c'est-a-dire exactement
+  sur la frontiere entre l'inerte et l'irreversible. Tout ce qui le precede se
+  contente de preparer un artefact dans Harbor, sans toucher a la production
+  qui tourne ; tout ce qui le suit modifie l'etat reel - creation de base,
+  migrations Prisma, bascule Blue/Green.
+
+  Il se trouvait auparavant apres les migrations. Un refus de l'approbateur
+  laissait donc le **schema de la base de production deja migre** face a une
+  application non deployee, et `scripts/rollback.sh` remettait l'ancien
+  conteneur devant un schema en avance sur lui. Une migration Prisma n'ayant
+  pas de retour arriere automatique, c'etait le seul point du pipeline ou un
+  "non" humain arrivait trop tard.
+- **Deploy PROD** (+ API), Blue/Green : uniquement sur tag. Le Blue/Green
   et son monitoring 15 min sont detailles dans
   `01-environnements-dev-preprod-prod.md` (section 3).
 
@@ -132,6 +178,38 @@ dizaines de secondes) au regard du risque evite.
   mauvaise configuration de securite peut encore bloquer une release. Le
   framework E2E est **Playwright par defaut** (`e2eFramework: 'playwright'`) ;
   un projet peut basculer sur Cypress via ce meme parametre.
+
+### 3.9 Exception au "build once" : `webappIsEnvSpecific`
+
+Le principe de 3.4 tient pour tout service qui lit sa configuration **au
+demarrage** : c'est le cas de l'API NestJS, dont les variables sont injectees
+par `docker run` au moment du deploiement. La meme image tourne donc telle
+quelle en DEV, PREPROD et PROD.
+
+Il ne tient pas pour un front Next.js. Chaque variable `NEXT_PUBLIC_*` est
+**inlinee dans le bundle JavaScript** au moment de `next build` : elle n'est
+plus une variable d'environnement une fois l'image construite, mais une chaine
+litterale dans le code servi au navigateur. Une image construite pour PREPROD
+porte donc l'URL de l'API PREPROD **definitivement**. La promouvoir en PROD
+fait appeler l'API de preproduction par le site de production - avec, au
+passage, les participations de vrais utilisateurs ecrites dans la base de
+preproduction, et un CORS qui rejette l'origine PROD puisque l'API PREPROD ne
+la connait pas.
+
+Le drapeau `webappIsEnvSpecific: true` corrige ce cas : sur le chemin tag, le
+**front est reconstruit** avec les valeurs de PROD (`Docker Build`, `Trivy
+Scan`, `Docker Push` sont donc actifs pour lui), tandis que l'**API reste
+promue** bit a bit depuis PREPROD par `Promote Image`. La garantie "meme
+binaire qu'en PREPROD" est ainsi conservee partout ou elle a un sens, et
+abandonnee explicitement la ou elle est techniquement impossible.
+
+Consequence pratique : c'est aussi ce drapeau qui rend `webappBuildArgsByEnv`
+utilisable pour PROD (identifiant Google Analytics, par exemple). Sans lui, ces
+valeurs ne sont jamais compilees, puisque aucun build de front n'a lieu sur le
+chemin tag.
+
+Tout projet dont le front fige de la configuration au build doit l'activer.
+`thetiptop` l'active.
 
 ## 4. Stages retires ou deplaces (hors matrice)
 

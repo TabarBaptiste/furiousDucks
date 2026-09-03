@@ -233,13 +233,18 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: Install Dependencies
-            // Inconditionnel, tags compris : "Run Prisma Migrations" tourne sur
-            // le chemin PROD et s'appuie sur les node_modules installes ici pour
-            // resoudre le CLI Prisma a la version du lockfile. La base PROD est
-            // un conteneur dedie et nait vide (voir dbContainerFor) - rien n'est
-            // repris de PREPROD - donc les migrations y sont indispensables.
+            // Sur le chemin PROD, le seul stage qui consomme les node_modules
+            // est "Run Prisma Migrations" : il resout le CLI Prisma a la version
+            // du lockfile, et la base PROD est un conteneur dedie qui nait vide
+            // (voir dbContainerFor) - rien n'est repris de PREPROD, donc les
+            // migrations y sont indispensables. Sans API (hasApi == false), un
+            // build de tag n'a plus aucun consommateur : Lint, Unit Tests et
+            // Sonar sont tous hors du chemin PROD. On n'installe donc rien.
             // =================================================================
             stage('Install Dependencies') {
+                when {
+                    expression { return env.DEPLOY_ENV != 'prod' || hasApi }
+                }
                 steps {
                     installDependencies(stack, env.HOST_WORKSPACE)
                 }
@@ -262,14 +267,16 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: Unit Tests
-            // Reserve aux branches qui deploient : sur feature/* aucun artefact
-            // n'en sort et le controle se fait a la merge request vers develop ;
-            // sur un tag, le commit a deja ete teste sur main (build once,
-            // deploy everywhere).
+            // Hors chemin PROD uniquement, pour la meme raison que Lint : un tag
+            // promeut un commit deja teste sur main (build once, deploy
+            // everywhere). Les branches de travail (feature/*, release/*,
+            // hotfix/*) sont incluses : les dependances sont deja installees,
+            // le cout est marginal, et c'est le seul retour automatise qu'une
+            // branche obtient avant sa merge request vers develop.
             // =================================================================
             stage('Unit Tests') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod'] }
+                    expression { return env.DEPLOY_ENV != 'prod' }
                 }
                 steps {
                     runUnitTests(stack, env.HOST_WORKSPACE)
@@ -283,11 +290,13 @@ void call(Map config = [:]) {
 
             // =================================================================
             // STAGE: SonarQube Analysis
-            // Reserve aux branches qui deploient quelque part (develop/main/tags) :
-            // une analyse par feature/fix branch n'apporte rien une fois la MR
-            // relue, et sature inutilement le projet SonarQube et les credits
-            // GitLab CI. Lint + Unit Tests restent inconditionnels : rapides, et
-            // c'est le seul retour qu'une branche jetable obtient avant sa MR.
+            // Reserve aux branches qui deploient quelque part (develop/main).
+            // Exclu des branches de travail pour une raison technique et non de
+            // cout : SonarQube tourne en edition Community, qui ne connait pas
+            // l'analyse par branche. Toute analyse, quelle que soit sa branche
+            // d'origine, ecrase les metriques du projet unique - un scan de
+            // feature/* ferait donc mentir le Quality Gate de develop et de
+            // main. Lint et Unit Tests, eux, restent joues sur ces branches.
             // Exclu du chemin PROD pour la meme raison que Lint/Unit Tests : un
             // tag promeut l'image de main sans rien reconstruire, et le commit
             // a deja ete analyse a ce moment-la.
@@ -320,10 +329,21 @@ void call(Map config = [:]) {
             // Runs BEFORE any image is built or pushed. It used to sit after
             // Docker Push, which meant a leaked secret was only reported once
             // the image containing it was already published to Harbor.
+            //
+            // Joue des les branches de travail : un secret pousse sur feature/*
+            // est deja compromis et devra etre revoque, donc c'est le seul
+            // controle dont la valeur depend strictement de sa precocite -
+            // l'apprendre a la merge request vers develop est deja trop tard.
+            //
+            // Hors chemin PROD : un build de tag ne modifie pas l'arbre source.
+            // Il promeut l'image "main-<sha>", dont l'existence dans Harbor
+            // prouve que main a construit et scanne exactement ce commit. Re-
+            // scanner le meme arbre avec les memes regles ne peut rien trouver
+            // de neuf.
             // =================================================================
             stage('Gitleaks') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] }
+                    expression { return env.DEPLOY_ENV != 'prod' }
                 }
                 steps {
                     runGitleaks(env.HOST_WORKSPACE)
@@ -334,12 +354,17 @@ void call(Map config = [:]) {
             // STAGE: Semgrep SAST (Static Application Security Testing)
             // Same rationale as Gitleaks: this used to run after Deploy DEV,
             // so the static analysis never had a chance to stop anything.
-            // Scoped to the environments that serve real users (PREPROD/PROD);
-            // DEV pushes are frequent and already covered by Sonar.
+            // Cantonne a PREPROD : c'est la porte d'entree vers la production,
+            // et le dernier point ou l'arbre source change encore. DEV est
+            // ecarte pour le rythme des pushs (deja couvert par Sonar), et le
+            // chemin PROD pour la meme raison que Gitleaks - source identique a
+            // celle deja analysee sur main. Semgrep ne pose de toute facon
+            // qu'un `unstable` : sur un tag il n'aurait meme pas le pouvoir
+            // d'arreter le deploiement qu'il precede.
             // =================================================================
             stage('Semgrep SAST') {
                 when {
-                    expression { return env.DEPLOY_ENV in ['preprod', 'prod'] }
+                    expression { return env.DEPLOY_ENV == 'preprod' }
                 }
                 steps {
                     runSemgrep(env.HOST_WORKSPACE)
@@ -514,6 +539,44 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Approval PROD
+            // Place juste apres "Promote Image" et avant "Ensure Database" :
+            // c'est la frontiere entre ce qui est inerte et ce qui ne l'est
+            // plus. Tout ce qui precede se contente de preparer un artefact
+            // dans Harbor, sans toucher a la production qui tourne. Tout ce qui
+            // suit modifie l'etat reel : creation de base, migrations Prisma
+            // (irreversibles), bascule Blue/Green.
+            //
+            // Ce stage se trouvait auparavant apres les migrations : un refus
+            // de l'approbateur laissait donc le schema de la base de production
+            // deja migre, face a une application non deployee - et
+            // `scripts/rollback.sh` remettait l'ancien conteneur devant un
+            // schema en avance sur lui.
+            // =================================================================
+            stage('Approval PROD') {
+                when {
+                    expression { return env.DEPLOY_ENV == 'prod' && deployProd }
+                }
+                steps {
+                    script {
+                        String approver = input(
+                            message: "Deploy ${projectName} ${env.IMAGE_TAG} to PRODUCTION?",
+                            submitterParameter: 'approver',
+                            submitter: 'admin,maintainers',
+                            parameters: [
+                                booleanParam(
+                                    name: 'confirm',
+                                    defaultValue: false,
+                                    description: 'Check to confirm production deployment'
+                                )
+                            ]
+                        )
+                        echo "Production deployment approved by: ${approver}"
+                    }
+                }
+            }
+
+            // =================================================================
             // STAGE: Ensure Database (optional separate backend, DEV + PREPROD + PROD)
             // Postgres is shared across DEV/PREPROD - one container, one
             // database per environment - and provisioned once, idempotently:
@@ -525,7 +588,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Ensure Database') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod, deployProd) }
+                    expression { return hasApi && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod, deployProd) }
                 }
                 steps {
                     withCredentials([usernamePassword(
@@ -551,7 +614,7 @@ void call(Map config = [:]) {
             // =================================================================
             stage('Run Prisma Migrations') {
                 when {
-                    expression { return hasApi && env.DEPLOY_ENV in ['dev', 'preprod', 'prod'] && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod, deployProd) }
+                    expression { return hasApi && deployFor(env.DEPLOY_ENV, deployDev, deployPreprod, deployProd) }
                 }
                 steps {
                     withCredentials([usernamePassword(
@@ -712,32 +775,6 @@ void call(Map config = [:]) {
                             artifacts: 'zap-report.html, zap-report.json',
                             allowEmptyArchive: true
                         )
-                    }
-                }
-            }
-
-            // =================================================================
-            // STAGE: Approval PROD
-            // =================================================================
-            stage('Approval PROD') {
-                when {
-                    expression { return env.DEPLOY_ENV == 'prod' && deployProd }
-                }
-                steps {
-                    script {
-                        String approver = input(
-                            message: "Deploy ${projectName} ${env.IMAGE_TAG} to PRODUCTION?",
-                            submitterParameter: 'approver',
-                            submitter: 'admin,maintainers',
-                            parameters: [
-                                booleanParam(
-                                    name: 'confirm',
-                                    defaultValue: false,
-                                    description: 'Check to confirm production deployment'
-                                )
-                            ]
-                        )
-                        echo "Production deployment approved by: ${approver}"
                     }
                 }
             }
