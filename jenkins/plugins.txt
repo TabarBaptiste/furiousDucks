@@ -8,6 +8,9 @@
 # --- Source Control --------------------------------------------------------
 git
 gitlab-plugin
+# Used by the multibranch job template (new-project.sh) for GitLabSCMSource
+# and the SSHCheckoutTrait (checkout over SSH instead of HTTPS+token).
+gitlab-branch-source
 
 # --- Pipeline / Workflow ---------------------------------------------------
 workflow-aggregator
@@ -16,6 +19,12 @@ pipeline-utility-steps
 # Pinned: gitlab-plugin 1.9.16 requires workflow-job >= 1571.1580.v18e46842c125,
 # newer than what workflow-aggregator resolves by default.
 workflow-job:1571.1580.v18e46842c125
+# Listed explicitly (rather than left as transitive deps of workflow-aggregator
+# / gitlab-plugin) so a rebuild always pulls their latest release - each has had
+# security advisories (access control, CSRF) fixed upstream.
+script-security
+pipeline-groovy-lib
+pipeline-build-step
 
 # --- Docker ----------------------------------------------------------------
 docker-workflow
