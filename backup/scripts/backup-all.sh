@@ -14,6 +14,9 @@
 #   WEBHOOK_URL        - URL to send failure notifications (default: placeholder)
 #   LOG_DIR            - Directory for log files (default: /var/log/backup)
 #   TEXTFILE_DIR       - node-exporter textfile dir for Prometheus metrics (default: /textfiles)
+#   PROJECT_DB_DUMPS   - client project databases to dump, one
+#                        "label:host:database:user:password" per line
+#                        (set in docker-compose.backup.yml)
 ###############################################################################
 set -euo pipefail
 
@@ -155,6 +158,14 @@ dump_postgres "sonarqube" "${SONARQUBE_DB_HOST:-}" "${SONARQUBE_DB_USER:-sonarqu
 dump_postgres "mattermost" "${MATTERMOST_DB_HOST:-}" "${MATTERMOST_DB_USER:-mattermost}" \
   "${MATTERMOST_DB_NAME:-mattermost}" "${MATTERMOST_DB_PASSWORD:-}"
 
+# Client project databases (PROJECT_DB_DUMPS, see docker-compose.backup.yml).
+# `read` hands the remainder of the line to its last variable, so the
+# password may contain ':' as long as the other fields do not.
+while IFS=: read -r name host db user pass; do
+  [[ -z "${name}" ]] && continue
+  dump_postgres "${name}" "${host}" "${user}" "${db}" "${pass}"
+done <<< "${PROJECT_DB_DUMPS:-}"
+
 for volume in "${!BACKUP_TARGETS[@]}"; do
   tag="${BACKUP_TARGETS[${volume}]}"
   volume_path="${VOLUMES_BASE}/${volume}"
@@ -179,6 +190,39 @@ for volume in "${!BACKUP_TARGETS[@]}"; do
     SUCCEEDED=$(( SUCCEEDED + 1 ))
   else
     log "ERROR" "  -> Failed to back up volume '${volume}'"
+    FAILED=$(( FAILED + 1 ))
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# Client project volumes
+#
+# Every volume mounted under ${VOLUMES_BASE}/projects/ is backed up and
+# tagged with its own name plus "project": adding a project to the backup
+# scope is a matter of mounting its volumes there in docker-compose.backup.yml,
+# without touching this script. Database volumes are cold copies (same
+# caveat as gitlab-data above); the consistent copy of a project database is
+# the logical dump declared in PROJECT_DB_DUMPS.
+# ---------------------------------------------------------------------------
+for volume_path in "${VOLUMES_BASE}"/projects/*/; do
+  [[ -d "${volume_path}" ]] || continue
+  volume="$(basename "${volume_path}")"
+
+  log "INFO" "Backing up project volume '${volume}'..."
+  vol_start="$(date +%s)"
+
+  if restic backup "${volume_path%/}" \
+    --tag "${volume}" \
+    --tag "project" \
+    --tag "daily" \
+    --verbose >> "${LOG_FILE}" 2>&1; then
+
+    vol_end="$(date +%s)"
+    vol_duration=$(( vol_end - vol_start ))
+    log "INFO" "  -> Project volume '${volume}' backed up successfully (${vol_duration}s)"
+    SUCCEEDED=$(( SUCCEEDED + 1 ))
+  else
+    log "ERROR" "  -> Failed to back up project volume '${volume}'"
     FAILED=$(( FAILED + 1 ))
   fi
 done

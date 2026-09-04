@@ -20,6 +20,8 @@ Construit une image simple : Restic + quelques outils (bash, curl, coreutils, cl
 
 Le Backup Manager reçoit, en lecture seule, tous les volumes de données de la plateforme (GitLab, Jenkins, Prometheus, Grafana, SonarQube, Mattermost) ainsi que les données de Harbor (le registre d'images). "Lecture seule" garantit que le processus de sauvegarde ne peut jamais modifier ou corrompre les données de production par erreur.
 
+Les projets clients sont couverts de la même façon : leurs volumes (bases PostgreSQL et Redis de Thé Tip Top en DEV, PREPROD et PROD) sont montés sous `/backup-sources/projects/` et leurs bases font l'objet d'un export logique, déclaré dans la variable `PROJECT_DB_DUMPS` de `docker-compose.backup.yml` (une ligne par base, identifiants dans `.env`). Ajouter un projet à la sauvegarde ne demande que d'ajouter ses volumes et ses lignes de dump dans le fichier compose — le script n'a pas à changer.
+
 ## Les 4 scripts
 
 ### `backup-all.sh` — la sauvegarde quotidienne (02h00)
@@ -27,8 +29,8 @@ Le Backup Manager reçoit, en lecture seule, tous les volumes de données de la 
 C'est le script principal. À chaque exécution :
 
 1. Il vérifie que le dépôt de sauvegarde (sur MinIO) existe, et l'initialise si c'est la toute première fois.
-2. Il fait un **export propre** des bases de données de SonarQube et Mattermost (via `pg_dump`) avant de les sauvegarder — une copie "à froid" d'une base en cours d'utilisation pourrait être incohérente, alors qu'un export logique capture un état stable.
-3. Il sauvegarde ensuite, un par un, tous les volumes listés plus haut (GitLab, Jenkins, Prometheus, Grafana, SonarQube, Mattermost, plus les exports de bases de données), en étiquetant chaque sauvegarde avec son nom et le tag `daily`.
+2. Il fait un **export propre** des bases de données de SonarQube, de Mattermost et des projets clients (`PROJECT_DB_DUMPS`, via `pg_dump`) avant de les sauvegarder — une copie "à froid" d'une base en cours d'utilisation pourrait être incohérente, alors qu'un export logique capture un état stable.
+3. Il sauvegarde ensuite, un par un, tous les volumes listés plus haut (GitLab, Jenkins, Prometheus, Grafana, SonarQube, Mattermost, plus les exports de bases de données), en étiquetant chaque sauvegarde avec son nom et le tag `daily`, puis tous les volumes de projets présents sous `/backup-sources/projects/` (tags : nom du volume, `project`, `daily`).
 4. Si un volume est absent, il est simplement ignoré (pas d'échec bloquant).
 5. Le résultat (succès ou nombre d'échecs) est écrit dans un fichier lu par Prometheus, pour que les alertes de supervision (« la sauvegarde a échoué », « la dernière sauvegarde est trop vieille ») puissent se déclencher automatiquement.
 6. En cas d'échec, un message est envoyé sur Mattermost via un webhook.
