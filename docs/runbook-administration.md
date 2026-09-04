@@ -6,7 +6,7 @@ Les commandes sont données avec les **vrais noms** du projet pilote **Thé Tip 
 
 ## 0. Identifiants Jenkins de Thé Tip Top
 
-Les mots de passe réels (DB, JWT) ne sont **jamais en clair sur le VPS** : ils sont créés une seule fois dans Jenkins et référencés par un `credentialId`. Pour les consulter/faire tourner : Jenkins → *Manage Jenkins* → *Credentials*.
+Les mots de passe réels (DB, JWT) ne sont **jamais dans le dépôt Git** : ils sont créés une seule fois dans Jenkins et référencés par un `credentialId`. Pour les consulter/faire tourner : Jenkins → *Manage Jenkins* → *Credentials*. Seuls les identifiants Postgres sont aussi recopiés dans `infrastructure/.env` (non versionné, variables `THETIPTOP_DB_*`) pour le dump nocturne de `backup-manager` : les faire tourner en même temps.
 
 | Credential ID Jenkins | Contenu | Utilisé pour |
 |---|---|---|
@@ -176,7 +176,7 @@ Script prêt à l'emploi, voir [`scripts/rollback.sh`](../scripts/rollback.sh) p
 
 ## 8. Backup manuel
 
-Le backup automatique tourne via Ofelia dans `common-backup-manager-ci` (voir [how/03-backup.md](how/03-backup.md)). Il ne dumpe en base logique que SonarQube et Mattermost — les bases des projets clients (dont Thé Tip Top) ne sont sauvegardées qu'au niveau volume Docker, pas en dump logique cohérent.
+Le backup automatique tourne via Ofelia dans `common-backup-manager-ci` (voir [how/03-backup.md](how/03-backup.md)). Il dumpe en base logique SonarQube, Mattermost et les bases Thé Tip Top (`thetiptop_dev`, `thetiptop_preprod`, `thetiptop_prod`, via `PROJECT_DB_DUMPS` dans `docker-compose.backup.yml`), et copie en plus les volumes PostgreSQL et Redis du projet sous `/backup-sources/projects/`. Les identifiants de connexion sont dans `.env` (`THETIPTOP_DB_*`) : les faire tourner en même temps que les credentials Jenkins correspondants.
 
 ```bash
 # Backup complet (tous les volumes de la plateforme CI/CD + dumps logiques SonarQube/Mattermost)
@@ -198,7 +198,7 @@ docker exec -it common-backup-manager-ci /scripts/restore.sh <snapshot_id> /tmp/
 docker exec -it common-backup-manager-ci /scripts/restore.sh <snapshot_id> /tmp/restore-test --volume jenkins-data
 ```
 
-**Dump logique manuel d'une base Thé Tip Top** (recommandé avant toute opération risquée en DEV/PREPROD/PROD, puisque `backup-all.sh` ne le fait pas pour ce projet) :
+**Dump logique manuel d'une base Thé Tip Top** (recommandé avant toute opération risquée en DEV/PREPROD/PROD, pour disposer d'un point de restauration plus récent que le dump nocturne) :
 
 ```bash
 DB_USER="$(docker exec thetiptop-db-shared printenv POSTGRES_USER)"
@@ -232,7 +232,47 @@ docker network inspect workflow-network --format '{{range .Containers}}{{.Name}}
 docker exec thetiptop-preprod getent hosts thetiptop-db-shared
 ```
 
-## 10. Références
+## 10. Maîtrise de l'espace disque (config hôte)
+
+Ces réglages vivent sur le VPS, **hors du dépôt** : ils ne sont pas rejoués par un `docker compose up`. À reproduire manuellement en cas de réinstallation du serveur.
+
+`/etc/docker/daemon.json` — rotation des logs de tous les containers (y compris ceux créés dynamiquement par Jenkins, que les compose files ne couvrent pas) et plafond du cache de build :
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "50m", "max-file": "3", "compress": "true" },
+  "builder": { "gc": { "enabled": true, "reservedSpace": "10GB", "maxUsedSpace": "25GB" } }
+}
+```
+
+⚠️ `systemctl reload docker` suffit pour la rotation des logs, mais elle ne s'applique qu'aux containers **créés après** le reload — les containers existants gardent des logs illimités jusqu'à leur prochaine recréation. Le GC BuildKit, lui, n'est lu qu'au **démarrage** du démon : il faut un `systemctl restart docker`, qui redémarre tous les containers → fenêtre de maintenance obligatoire.
+
+`/etc/systemd/journald.conf.d/99-size-limit.conf` — plafond du journal systemd (sans quoi journald monte jusqu'à 10% du disque, soit ~19 Go ici) :
+
+```ini
+[Journal]
+SystemMaxUse=500M
+SystemMaxFileSize=50M
+```
+
+Nettoyage manuel quand le disque se remplit :
+
+```bash
+# Cache de build (le plus gros gain ; le filtre garde le cache récent pour ne pas ralentir la CI)
+docker builder prune -f --filter until=72h
+
+# Images obsolètes — NE JAMAIS faire `docker image prune -a` à l'aveugle :
+# cela supprimerait les tags semver nécessaires au rollback Blue/Green.
+# Toujours conserver : les tags vX.Y.Z, et toute image référencée par un container
+# (y compris les `*-previous` arrêtés, qui sont la cible du rollback).
+docker ps -a --format '{{.Image}}' | sort -u   # liste blanche à préserver
+
+# Log d'un container devenu énorme (GitLab est le principal émetteur)
+sudo truncate -s 0 /var/lib/docker/containers/<ID>/<ID>-json.log
+```
+
+## 11. Références
 
 - Mapping environnement / nommage : [how/01-environnements-dev-preprod-prod.md](how/01-environnements-dev-preprod-prod.md)
 - Fonctionnement du backup : [how/03-backup.md](how/03-backup.md)

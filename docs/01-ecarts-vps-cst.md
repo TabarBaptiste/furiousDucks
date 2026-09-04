@@ -43,25 +43,6 @@ Format d'une entree :
 
 ## Ecarts en cours
 
-### [2026-08-27] Copie hors site : le 3-2-1 n'etait pas reellement applique
-
-- **Statut** : A REPORTER
-- **Section CST** : 3.4 c) (l.613) et 4.2 du plan d'integration (l.1112) ;
-  responsabilites Admin CI (l.931)
-- **Le CST dit** : les sauvegardes sont « stockees sur un support distinct
-  selon le principe 3-2-1 », et l'Admin CI doit « garantir l'application du
-  principe 3-2-1 ».
-- **Le VPS fait** : jusqu'a cette date, l'unique copie Restic vivait dans
-  MinIO, **sur le meme VPS et le meme disque** que les services sauvegardes :
-  1 copie, 1 support, 0 hors site. Le 3-2-1 etait affirme mais pas atteint.
-  La troisieme copie est desormais assuree par `script/backup-pull-local.sh`,
-  execute sur le poste local (`restic copy` depuis `s3.wk-archi-...`).
-- **Correction a apporter** : preciser dans le CST que MinIO, colocalise avec
-  les services, ne constitue ni le second support ni la copie hors site, et
-  documenter la copie locale comme troisieme copie.
-- **Pourquoi** : une perte du VPS ou de son disque detruisait simultanement les
-  donnees et leurs sauvegardes. Voir `tools/09-restic-minio.md`.
-
 ### [2026-08-27] Copie hors site declenchee manuellement, non planifiee
 
 - **Statut** : ASSUME
@@ -78,9 +59,156 @@ Format d'une entree :
 - **Pourquoi** : ecart volontaire lie aux ressources materielles disponibles,
   pas a la conception. A lever des que le stockage local le permet.
 
-### [2026-08-27] Image MinIO figee, distribution communautaire arretee
+### [2026-09-02] Front Next.js reconstruit pour la PROD (exception au build once)
+
+- **Statut** : ASSUME
+- **Section CST** : 2.4 (l.436) « la meme image construite une fois peut etre
+  reutilisee a l'identique a travers les environnements sans reconstruction »
+- **Le CST dit** : une image unique est promue sans reconstruction, de DEV a
+  PROD.
+- **Le VPS fait** : ce principe est conserve pour l'API (NestJS lit sa
+  configuration au demarrage) mais **abandonne pour le front Next.js**. Chaque
+  variable `NEXT_PUBLIC_*` est inlinee dans le bundle JavaScript au moment du
+  `next build` : l'image construite pour PREPROD porte definitivement l'URL de
+  l'API PREPROD. Le drapeau `webappIsEnvSpecific: true` (active sur
+  `thetiptop`) fait donc reconstruire, scanner et pousser le front pour la
+  PROD ; l'API, elle, reste promue bit a bit.
+- **Correction a apporter** : preciser en 2.4 que la promotion sans
+  reconstruction s'applique aux images dont la configuration est lue au
+  demarrage, et documenter l'exception des bundles front a configuration figee
+  au build.
+- **Pourquoi** : sans cette exception, le site de production appelait l'API de
+  preproduction - donc ecrivait les participations de vrais utilisateurs dans
+  la base de preproduction, quand le CORS de l'API PREPROD ne rejetait pas
+  purement et simplement l'origine PROD. L'identifiant Google Analytics de
+  production (`webappBuildArgsByEnv`) n'etait par ailleurs jamais compile.
+  Voir `how/02-pipeline-ci-cd.md` section 3.9.
+
+### [2026-09-02] SonarQube absent des branches de travail : limite de l'edition Community
+
+- **Statut** : ASSUME
+- **Section CST** : 4. (l.444) « SonarQube Community Edition » et quality gates
+  « avant tout deploiement en PREPROD ou en PROD » ; 5.2 (l.1029) « quality
+  gates : linting, tests et scans de securite obligatoires avant tout
+  deploiement »
+- **Le CST dit** : SonarQube est utilise en edition Community, sans que la
+  consequence de ce choix sur la couverture par branche soit enoncee.
+- **Le VPS fait** : `SonarQube Analysis` et `Quality Gate` ne tournent que sur
+  `develop` et `main`. L'edition Community ne supporte pas l'analyse par
+  branche : toute analyse, quelle que soit sa branche d'origine, ecrit dans le
+  projet unique et en ecrase les metriques. Analyser une `feature/*` ferait
+  donc mentir le Quality Gate de `develop` et de `main`.
+- **Correction a apporter** : mentionner explicitement en 4. que l'edition
+  Community n'offre pas d'analyse par branche, et que la portee des quality
+  gates SonarQube est de ce fait limitee aux branches deployantes.
+- **Pourquoi** : contrainte de licence, pas de conception - la lever suppose
+  une edition Developer (payante). C'est aussi la raison pour laquelle
+  l'extension de la couverture aux branches de travail (entree precedente)
+  s'arrete a Lint, Unit Tests et Gitleaks. Voir `tools/05-sonarqube.md` et
+  `how/02-pipeline-ci-cd.md` section 3.2.
+
+### [2026-09-04] Ports publies et acces Docker : le CST decrit plus d'exposition que le VPS
 
 - **Statut** : A REPORTER
+- **Section CST** : Securite reseau (l.828) ; CI Server - Jenkins (l.683-687) ; cAdvisor (l.747) ; Annexe E (l.2851, 2857, 2864)
+- **Le CST dit** : les ports 8080 (dashboard Traefik) et 8081 (cAdvisor) sont
+  « publies sur l'hote a des fins de debug », le port 50000 « permet la
+  connexion des agents Jenkins en JNLP » et est publie ; Jenkins « declenche
+  les deploiements via l'API Docker en TLS sur le port 2376 » ; les agents sont
+  « des conteneurs ephemeres fonctionnant en Docker-in-Docker ».
+- **Le VPS fait** : seuls 80, 443 et 2222 sont publies (plus 127.0.0.1:1514,
+  syslog interne de Harbor). Le dashboard Traefik n'est joignable qu'en HTTPS
+  avec basic auth ; cAdvisor (:8080) et l'entrypoint metriques de Traefik
+  (:8082) ne sont visibles que depuis ci_network. Jenkins utilise la socket
+  /var/run/docker.sock montee (Docker-outside-of-Docker), aucun TCP 2376.
+  Aucun agent JNLP n'est connecte : ciPipeline tourne en `agent any` (2
+  executeurs sur le controleur) et lance chaque outil dans un `docker run`
+  jetable ; les templates d'agents Docker du JCasC ne sont pas utilises.
+- **Correction a apporter** : retirer 8080, 8081 et 50000 de la liste des
+  ports publies (Securite reseau, Annexe E, tableau cAdvisor) ; decrire l'acces
+  Docker par socket et l'execution des etapes en conteneurs jetables.
+- **Pourquoi** : le CST decrit une surface d'exposition plus large que la
+  realite ; a l'oral, annoncer la version la plus stricte, qui est la vraie.
+
+### [2026-09-04] Reseaux Docker : roles inverses et environnements projets sur workflow-network
+
+- **Statut** : A REPORTER
+- **Section CST** : Convention de nommage, paragraphe « Reseaux » (l.872) ;
+  tableau 1.3 Conventions de nommage, ligne « Reseau Docker » (l.1444) ;
+  cibles Prometheus (l.720-722)
+- **Le CST dit** : « workflow-network regroupe les services CI/CD : Traefik,
+  GitLab, SonarQube » et « ci_network est le reseau principal partage » ; les
+  environnements DEV/PREPROD/PROD sont sur ci_network ; Prometheus scrape
+  Harbor et cAdvisor sur 8081.
+- **Le VPS fait** : ci_network est le reseau du socle, celui ou Traefik
+  decouvre les services (providers.docker.network) ; workflow-network est le
+  reseau transverse externe ou vivent tous les conteneurs des projets
+  (thetiptop-*), auquel les services du socle sont aussi attaches ;
+  monitoring_network et backup_network (internal) sont propres a leur stack.
+  Cibles reelles : Harbor via le conteneur nginx:9090, cAdvisor :8080,
+  Traefik :8082, MinIO :9000 (bearer token), postgres-exporter :9187
+  (SonarQube et Mattermost), Loki :3100, Grafana :3000 ; SonarQube n'est pas
+  scrape (endpoint reserve a l'edition Developer, couvert par ContainerDown).
+- **Correction a apporter** : reecrire le paragraphe « Reseaux » et la ligne
+  du tableau 1.3 avec les roles reels ; corriger la table des cibles.
+- **Pourquoi** : le diagramme d'infrastructure est presente a l'oral ; un
+  `docker network inspect` montre l'inversion.
+
+### [2026-09-04] Procedures de sauvegarde et de restauration : noms, chemins et perimetre differents du VPS
+
+- **Statut** : A REPORTER
+- **Section CST** : Sauvegarde manuelle 4.1 (l.1680) ; matrice 6.1 et tableau
+  6.2 (l.1740) ; Restauration complete 2.2 (l.1817, 1838) ; Restauration PROD
+  5.3 (l.1942)
+- **Le CST dit** : `ssh furious-admin@vps-principal -p 2222`,
+  `cd /opt/workflow-furious-ducks/infrastructure`, `docker exec backup-manager`,
+  `docker volume rm gitlab-config gitlab-data jenkins-data prometheus-data
+  grafana-data` ; « Donnees Portainer » parmi les elements non sauvegardes ;
+  Mattermost absent de la matrice des elements sauvegardes.
+- **Le VPS fait** : le port 2222 est celui du SSH GitLab, pas de l'hote ; le
+  depot est dans /opt/furious-ducks/infrastructure ; le conteneur s'appelle
+  common-backup-manager-ci ; les volumes suivent la convention de l'Annexe G
+  (common-gitlab-config-ci, common-jenkins-data-ci, ...) ; Portainer n'est pas
+  deploye ; Mattermost (donnees, config, dump pg_dump) est sauvegarde chaque
+  nuit. Depuis le 2026-09-04, les bases et volumes des projets clients
+  (thetiptop-db-*, thetiptop-redis-*) sont eux aussi sauvegardes : dumps
+  pg_dump via PROJECT_DB_DUMPS et copies des volumes sous
+  /backup-sources/projects/ (CST 3.4 a desormais exact sur ce point).
+- **Correction a apporter** : aligner les commandes sur les noms reels (ou
+  renvoyer vers docs/runbook-administration.md), retirer Portainer, ajouter
+  Mattermost et les bases projets a la matrice 6.1.
+- **Pourquoi** : une procedure de restauration copiee-collee telle quelle
+  echouerait ; c'est le document que l'ingenieur DevOps est cense suivre en
+  incident.
+
+---
+
+## Ecarts reportes
+
+### [2026-08-27] Copie hors site : le 3-2-1 n'etait pas reellement applique
+
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
+- **Section CST** : 3.4 c) (l.613) et 4.2 du plan d'integration (l.1112) ;
+  responsabilites Admin CI (l.931)
+- **Le CST dit** : les sauvegardes sont « stockees sur un support distinct
+  selon le principe 3-2-1 », et l'Admin CI doit « garantir l'application du
+  principe 3-2-1 ».
+- **Le VPS fait** : jusqu'a cette date, l'unique copie Restic vivait dans
+  MinIO, **sur le meme VPS et le meme disque** que les services sauvegardes :
+  1 copie, 1 support, 0 hors site. Le 3-2-1 etait affirme mais pas atteint.
+  La troisieme copie est desormais assuree par `script/backup-pull-local.sh`,
+  execute sur le poste local (`restic copy` depuis `s3.wk-archi-...`).
+- **Correction a apporter** : preciser dans le CST que MinIO, colocalise avec
+  les services, ne constitue ni le second support ni la copie hors site, et
+  documenter la copie locale comme troisieme copie.
+- **Pourquoi** : une perte du VPS ou de son disque detruisait simultanement les
+  donnees et leurs sauvegardes. Voir `tools/09-restic-minio.md`.
+
+### [2026-08-27] Image MinIO figee, distribution communautaire arretee
+
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : tableau des images (l.1630) et tableau des outils (l.1647)
 - **Le CST dit** : image `minio/minio:latest` ; MinIO justifie notamment par
   son « interface web » et sa « haute disponibilite ».
@@ -101,7 +229,8 @@ Format d'une entree :
 
 ### [2026-08-27] Console MinIO : administration retiree de l'edition communautaire
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : tableau des ports MinIO (l.769) ; plan d'integration,
   acces « MinIO | Web + API | Admin » (l.1021)
 - **Le CST dit** : « Console UI | 9001 | Interface web MinIO », laissant
@@ -117,7 +246,8 @@ Format d'une entree :
 
 ### [2026-08-27] Utilisateur `backup-reader` : ecriture necessaire sur `locks/`
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 3.4 c) (l.613) « les acces sont restreints et journalises » ;
   gestion des secrets (l.470)
 - **Le CST dit** : les acces aux sauvegardes sont restreints.
@@ -136,7 +266,8 @@ Format d'une entree :
 
 ### [2026-08-28] Monitor PREPROD supprime du pipeline
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 3.2, tableau des specificites PREPROD (l.1488) et tableau
   comparatif des environnements (l.1572) « Monitoring post-deploy | ... |
   5 min metriques [PREPROD] | 15 min metriques strictes [PROD] »
@@ -165,7 +296,8 @@ Format d'une entree :
 
 ### [2026-08-28] Quality gates non re-executes sur le chemin PROD (build once)
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 2.9 (l.444) « quality gates automatiques ... avant tout
   deploiement en PREPROD ou en PROD » ; 4. (l.476) « quality gates : linting,
   tests automatises, analyse SonarQube et scans de securite sont obligatoires
@@ -195,7 +327,8 @@ Format d'une entree :
 > Cette entree remplace « Gitleaks bloque desormais aussi le chemin PROD »
 > (meme date). Decision revue le 2026-09-02.
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 4.2 (l.468) Gitleaks « bloque le pipeline aux stades DEV et
   PREPROD » ; tableau 3.2 (l.1490) « Scan securite complet : Trivy (image) +
   Gitleaks (secrets) + OWASP - derniere barriere de securite avant la
@@ -227,7 +360,8 @@ Format d'une entree :
 
 ### [2026-08-28] Retention Harbor : exception non ecrite pour les tags de release
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 7.5 (l.1804) « Harbor conserve les 10 dernieres versions
   taguees par projet et purge les images non taguees apres 7 jours »
 - **Le CST dit** : une regle de retention unique, 10 versions taguees par
@@ -249,7 +383,8 @@ Format d'une entree :
 
 ### [2026-08-28] PREPROD : base de donnees vide, pas de copie anonymisee de PROD
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 3.2, tableau des specificites PREPROD (l.1489) « BDD
   anonymisee | Copie des donnees de prod avec anonymisation RGPD | Tester
   avec des donnees realistes sans compromission des donnees personnelles » ;
@@ -276,7 +411,8 @@ Format d'une entree :
 
 ### [2026-09-02] Approbation PROD deplacee avant les migrations de base
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 7.2 (l.1588) « Pourquoi une approbation manuelle pour la
   PROD ? » ; tableau comparatif des environnements (l.1566) « Validation +
   deploiements controles »
@@ -298,34 +434,10 @@ Format d'une entree :
   effet de bord non annulable, ce qui privait l'approbation de sa raison
   d'etre. Voir `how/02-pipeline-ci-cd.md` section 3.7.
 
-### [2026-09-02] Front Next.js reconstruit pour la PROD (exception au build once)
-
-- **Statut** : ASSUME
-- **Section CST** : 2.4 (l.436) « la meme image construite une fois peut etre
-  reutilisee a l'identique a travers les environnements sans reconstruction »
-- **Le CST dit** : une image unique est promue sans reconstruction, de DEV a
-  PROD.
-- **Le VPS fait** : ce principe est conserve pour l'API (NestJS lit sa
-  configuration au demarrage) mais **abandonne pour le front Next.js**. Chaque
-  variable `NEXT_PUBLIC_*` est inlinee dans le bundle JavaScript au moment du
-  `next build` : l'image construite pour PREPROD porte definitivement l'URL de
-  l'API PREPROD. Le drapeau `webappIsEnvSpecific: true` (active sur
-  `thetiptop`) fait donc reconstruire, scanner et pousser le front pour la
-  PROD ; l'API, elle, reste promue bit a bit.
-- **Correction a apporter** : preciser en 2.4 que la promotion sans
-  reconstruction s'applique aux images dont la configuration est lue au
-  demarrage, et documenter l'exception des bundles front a configuration figee
-  au build.
-- **Pourquoi** : sans cette exception, le site de production appelait l'API de
-  preproduction - donc ecrivait les participations de vrais utilisateurs dans
-  la base de preproduction, quand le CORS de l'API PREPROD ne rejetait pas
-  purement et simplement l'origine PROD. L'identifiant Google Analytics de
-  production (`webappBuildArgsByEnv`) n'etait par ailleurs jamais compile.
-  Voir `how/02-pipeline-ci-cd.md` section 3.9.
-
 ### [2026-09-02] Tests unitaires et Gitleaks joues des les branches de travail
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 4. (l.442) « le pipeline echoue automatiquement en cas
   d'echec » des tests ; 4.2 (l.468) Gitleaks « bloque le pipeline aux stades
   DEV et PREPROD »
@@ -348,32 +460,10 @@ Format d'une entree :
   deja compromis et devra etre revoque. Voir `how/02-pipeline-ci-cd.md`
   sections 3.1 et 3.3.
 
-### [2026-09-02] SonarQube absent des branches de travail : limite de l'edition Community
-
-- **Statut** : ASSUME
-- **Section CST** : 4. (l.444) « SonarQube Community Edition » et quality gates
-  « avant tout deploiement en PREPROD ou en PROD » ; 5.2 (l.1029) « quality
-  gates : linting, tests et scans de securite obligatoires avant tout
-  deploiement »
-- **Le CST dit** : SonarQube est utilise en edition Community, sans que la
-  consequence de ce choix sur la couverture par branche soit enoncee.
-- **Le VPS fait** : `SonarQube Analysis` et `Quality Gate` ne tournent que sur
-  `develop` et `main`. L'edition Community ne supporte pas l'analyse par
-  branche : toute analyse, quelle que soit sa branche d'origine, ecrit dans le
-  projet unique et en ecrase les metriques. Analyser une `feature/*` ferait
-  donc mentir le Quality Gate de `develop` et de `main`.
-- **Correction a apporter** : mentionner explicitement en 4. que l'edition
-  Community n'offre pas d'analyse par branche, et que la portee des quality
-  gates SonarQube est de ce fait limitee aux branches deployantes.
-- **Pourquoi** : contrainte de licence, pas de conception - la lever suppose
-  une edition Developer (payante). C'est aussi la raison pour laquelle
-  l'extension de la couverture aux branches de travail (entree precedente)
-  s'arrete a Lint, Unit Tests et Gitleaks. Voir `tools/05-sonarqube.md` et
-  `how/02-pipeline-ci-cd.md` section 3.2.
-
 ### [2026-09-02] Install Dependencies saute sur le tag pour les projets sans API
 
-- **Statut** : A REPORTER
+- **Statut** : REPORTE
+- **Reporte le** : 2026-09-04, CST v2 (version de travail)
 - **Section CST** : 3.2, tableau des etapes du pipeline (l.1464 et suivantes)
 - **Le CST dit** : l'installation des dependances est une etape du pipeline,
   sans condition d'environnement.
@@ -387,10 +477,3 @@ Format d'une entree :
 - **Pourquoi** : quelques dizaines de secondes et un workspace rempli pour rien
   a chaque mise en production d'un projet sans backend. Voir
   `how/02-pipeline-ci-cd.md` section 3.5.
-
----
-
-## Ecarts reportes
-
-*(vide — deplacer ici les entrees une fois integrees au CST, en conservant la
-date d'origine et en ajoutant la date de report)*
