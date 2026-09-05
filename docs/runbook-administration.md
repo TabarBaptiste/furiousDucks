@@ -232,9 +232,26 @@ docker network inspect workflow-network --format '{{range .Containers}}{{.Name}}
 docker exec thetiptop-preprod getent hosts thetiptop-db-shared
 ```
 
-## 10. Maîtrise de l'espace disque (config hôte)
+## 10. Maîtrise de l'espace disque
 
-Ces réglages vivent sur le VPS, **hors du dépôt** : ils ne sont pas rejoués par un `docker compose up`. À reproduire manuellement en cas de réinstallation du serveur.
+### 10.1 Ce qui tourne automatiquement
+
+Deux jobs Ofelia quotidiens tiennent le disque, en plus de la rétention Restic (cf. [how/03-backup.md](how/03-backup.md)) :
+
+| Quand | Job | Ce qu'il fait |
+|---|---|---|
+| 05:30 | `prune-workspaces-daily` | supprime les workspaces des branches Jenkins inactives depuis 7 jours (l'historique des builds, les rapports et les artefacts archivés ne sont **jamais** touchés) |
+| 05:45 | `prune-docker-images-daily` | supprime les images applicatives du cache local devenues inutiles, puis ramène le cache BuildKit sous 25 Go |
+
+Côté Harbor, deux planifications propres au registre (cf. [tools/04-harbor.md](tools/04-harbor.md) 3.9 et 3.10) : politique de rétention le **samedi 05:00** (10 derniers tags `develop-*`/`main-*`, `v*` et `latest` conservés sans limite), garbage collection le **samedi 07:00**. L'ordre est voulu : rétention → GC → sauvegarde du registre le dimanche 01:00.
+
+`scripts/prune-docker-images.sh` protège explicitement, dans cet ordre : toute image référencée par un container (y compris les `*-previous` arrêtés, cibles du rollback Blue/Green), les tags sémantiques `vX.Y.Z`, le tag `latest`, et tout ce qui a moins de 24 h. Le lancer à blanc avant d'ajuster ses seuils :
+
+```bash
+docker exec common-jenkins-ci bash /opt/furious-ducks/scripts/prune-docker-images.sh --dry-run
+```
+
+### 10.2 Réglages hôte (hors dépôt, à rejouer si le serveur est réinstallé)
 
 `/etc/docker/daemon.json` — rotation des logs de tous les containers (y compris ceux créés dynamiquement par Jenkins, que les compose files ne couvrent pas) et plafond du cache de build :
 
@@ -246,7 +263,13 @@ Ces réglages vivent sur le VPS, **hors du dépôt** : ils ne sont pas rejoués 
 }
 ```
 
-⚠️ `systemctl reload docker` suffit pour la rotation des logs, mais elle ne s'applique qu'aux containers **créés après** le reload — les containers existants gardent des logs illimités jusqu'à leur prochaine recréation. Le GC BuildKit, lui, n'est lu qu'au **démarrage** du démon : il faut un `systemctl restart docker`, qui redémarre tous les containers → fenêtre de maintenance obligatoire.
+⚠️ **Ce fichier n'est pas actif en l'état.** Il a été écrit le 2026-09-03 alors que le démon tourne sans interruption depuis le 2026-07-08 : ni le plafond des logs ni le GC BuildKit n'ont jamais été lus. Preuve : `docker inspect <container> --format '{{json .HostConfig.LogConfig.Config}}'` renvoie `{}` sur tous les containers, et le cache de build avait atteint 57 Go pour un plafond déclaré à 25 Go. Les deux réglages ne prennent effet qu'après :
+
+```bash
+sudo systemctl restart docker   # redémarre TOUS les containers -> fenêtre de maintenance
+```
+
+Tant que ce redémarrage n'a pas eu lieu, le job `prune-docker-images-daily` applique le même plafond de cache par une commande explicite, et les logs doivent être tronqués à la main (10.3). Après le redémarrage, la rotation ne s'appliquera qu'aux containers **recréés ensuite** : les containers de longue durée (GitLab, Jenkins) garderont des logs illimités jusqu'à leur prochaine recréation.
 
 `/etc/systemd/journald.conf.d/99-size-limit.conf` — plafond du journal systemd (sans quoi journald monte jusqu'à 10% du disque, soit ~19 Go ici) :
 
@@ -256,21 +279,28 @@ SystemMaxUse=500M
 SystemMaxFileSize=50M
 ```
 
-Nettoyage manuel quand le disque se remplit :
+Celui-ci **est** actif : `journalctl --disk-usage` renvoie ~8 Mo.
+
+### 10.3 Nettoyage manuel
 
 ```bash
-# Cache de build (le plus gros gain ; le filtre garde le cache récent pour ne pas ralentir la CI)
-docker builder prune -f --filter until=72h
+# Où est passé l'espace ?
+docker system df
+df -h /
 
-# Images obsolètes — NE JAMAIS faire `docker image prune -a` à l'aveugle :
-# cela supprimerait les tags semver nécessaires au rollback Blue/Green.
-# Toujours conserver : les tags vX.Y.Z, et toute image référencée par un container
-# (y compris les `*-previous` arrêtés, qui sont la cible du rollback).
-docker ps -a --format '{{.Image}}' | sort -u   # liste blanche à préserver
+# Logs de containers dépassant 20 Mo (déjà expédiés vers Loki, rétention 90j)
+sudo bash -c 'for f in /var/lib/docker/containers/*/*-json.log; do
+  [ "$(stat -c %s "$f")" -gt 20971520 ] && { echo "$f"; truncate -s 0 "$f"; }
+done'
 
-# Log d'un container devenu énorme (GitLab est le principal émetteur)
-sudo truncate -s 0 /var/lib/docker/containers/<ID>/<ID>-json.log
+# Images applicatives + cache de build (mêmes protections que le job quotidien)
+docker exec common-jenkins-ci bash /opt/furious-ducks/scripts/prune-docker-images.sh
+
+# Purge plus agressive du cache de build (le prochain build recompile tout : +3 à 5 min)
+docker builder prune -af
 ```
+
+⚠️ Ne **jamais** lancer `docker image prune -a` à l'aveugle : cela supprimerait les tags `vX.Y.Z` dont dépendent `scripts/rollback.sh` et le stage `Promote Image`. Utiliser le script, qui les protège.
 
 ## 11. Références
 

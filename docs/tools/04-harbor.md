@@ -273,9 +273,40 @@ delai a 7 jours, applique par la garbage collection planifiee (voir 3.10).
 
 **Planification**
 
-Schedule de la politique : **Weekly (Sunday 02:00)**, avant la sauvegarde
-hebdomadaire Restic du dimanche - le contenu sauvegarde est ainsi deja purge
-du superflu (justification CST 7.5).
+Schedule de la politique : **Weekly (Saturday 05:00)**, soit **avant** la
+sauvegarde hebdomadaire Restic du registre (dimanche 01:00) - le contenu
+sauvegarde est ainsi deja purge du superflu (justification CST 7.5). La
+garbage collection s'intercale entre les deux (samedi 07:00, voir 3.10), de
+sorte que l'espace est reellement libere avant que Restic ne lise `/data`.
+
+**Etat applique (2026-09-05)** : la politique existe (`retention_id = 1` sur le
+projet `furious-ducks`) et a ete appliquee une premiere fois. Avant :
+130 artefacts sur `thetiptop`, 38 sur `thetiptop-api` ; apres : 29 et 12. Les
+quatre tags de release (`v1.1.2`, `v1.1.4`, `v1.2.0`, `v1.2.1`), le tag
+`latest` et les images alors deployees (`develop-eed5703`, `main-89fa256`) ont
+ete conserves - controle explicite avant et apres execution.
+
+**Verifier / rejouer depuis la ligne de commande**
+
+L'interface web reste la voie normale ; l'API permet de verifier l'etat sans
+ouvrir un navigateur, et d'executer **a blanc** avant de supprimer quoi que ce
+soit.
+
+```bash
+set -a && . ./.env && set +a
+H=https://registry.wk-archi-o24a-4-5-g1.fr/api/v2.0
+
+# La politique est-elle attachee au projet ? (cherche "retention_id")
+curl -s -u "admin:$HARBOR_ADMIN_PASSWORD" "$H/projects/furious-ducks/metadatas"
+
+# La lire
+curl -s -u "admin:$HARBOR_ADMIN_PASSWORD" "$H/retentions/1" | python3 -m json.tool
+
+# L'executer A BLANC (ne supprime rien, renseigne total/retained par depot)
+curl -s -u "admin:$HARBOR_ADMIN_PASSWORD" -X POST -H 'Content-Type: application/json' \
+  -d '{"dry_run":true}' "$H/retentions/1/executions"
+curl -s -u "admin:$HARBOR_ADMIN_PASSWORD" "$H/retentions/1/executions?page_size=1" | python3 -m json.tool
+```
 
 > **Pourquoi deux regles et pas une seule `all tags` ?**
 > Une regle unique "retain the most recent 10" sur `all tags` supprimerait les
@@ -295,8 +326,31 @@ orphelines. Sans elle, `/data` continue de grossir malgre la retention.
 
 1. **Administration > Garbage Collection**
 2. Cocher **"Delete Untagged Artifacts"**
-3. Schedule : **Weekly (Sunday 03:00)** - apres la politique de retention de 02:00
+3. Schedule : **Weekly (Saturday 07:00)** - apres la politique de retention de
+   samedi 05:00, et avant la sauvegarde du registre du dimanche 01:00
 4. **Save**
+
+**Etat applique (2026-09-05)** : planifiee (`0 0 7 * * 6`,
+`delete_untagged: true`) et executee une premiere fois dans la foulee de la
+retention. `/data/registry` est passe de **3,5 Go a 870 Mo**.
+
+> **A savoir avant de lancer une GC manuelle** : Harbor bascule le registre en
+> **lecture seule** pendant l'operation. Un `docker push` d'un pipeline en cours
+> echouerait. La lancer hors des heures de build (c'est la raison du creneau du
+> samedi matin).
+
+```bash
+# Planification enregistree
+curl -s -u "admin:$HARBOR_ADMIN_PASSWORD" "$H/system/gc/schedule" | python3 -m json.tool
+
+# Declencher une GC manuelle
+curl -s -u "admin:$HARBOR_ADMIN_PASSWORD" -X POST -H 'Content-Type: application/json' \
+  -d '{"schedule":{"type":"Manual"},"parameters":{"delete_untagged":true,"workers":1}}' \
+  "$H/system/gc/schedule"
+
+# Suivre
+curl -s -u "admin:$HARBOR_ADMIN_PASSWORD" "$H/system/gc?page_size=1" | python3 -m json.tool
+```
 
 ### 3.11 Configurer le compte Jenkins
 

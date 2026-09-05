@@ -181,6 +181,80 @@ Format d'une entree :
   echouerait ; c'est le document que l'ingenieur DevOps est cense suivre en
   incident.
 
+### [2026-09-05] Tag d'image Ofelia inexistant : toute recreation de la stack backup echouait
+
+- **Statut** : A REPORTER
+- **Section CST** : 1.1 Composants du systeme de backup (l.1617), ligne
+  « Backup Scheduler (Ofelia) | mcuadros/ofelia:latest »
+- **Le CST dit** : l'ordonnanceur est `mcuadros/ofelia:latest`.
+- **Le VPS fait** : le conteneur en service tourne bien sur
+  `mcuadros/ofelia:latest`, mais `docker-compose.backup.yml` et
+  `docs/tools/17-ofelia.md` reclamaient `mcuadros/ofelia:v0.3.22` - **un tag
+  qui n'existe pas** sur Docker Hub (le tag publie est `0.3.22`, sans `v`).
+  Consequence : `docker compose -f docker-compose.backup.yml up -d` echouait sur
+  `failed to resolve reference`, et **aucun job planifie n'aurait redemarre** -
+  ni la sauvegarde quotidienne, ni la verification, ni la retention. Le defaut
+  est reste invisible tant que personne ne recreait le conteneur. Corrige en
+  `mcuadros/ofelia:0.3.22`, dont le digest
+  (`sha256:efcbe2c5...f97e492`) est identique a celui de l'image en service :
+  la correction ne change pas le binaire execute.
+- **Correction a apporter** : remplacer `latest` par `0.3.22` dans le tableau
+  des images du CST, coherent avec la regle d'epinglage deja appliquee a MinIO.
+- **Pourquoi** : un tag epingle mais faux est plus dangereux qu'un `latest` -
+  il donne l'illusion de la reproductibilite et ne se manifeste qu'au pire
+  moment, une reconstruction apres incident.
+
+### [2026-09-05] Reglages Docker de l'hote ecrits mais jamais charges par le demon
+
+- **Statut** : A REPORTER
+- **Section CST** : 3.4 Politique de sauvegarde et Outils d'administration /
+  Maintenance (l.874) ; Annexe I, KPI « Conformite des backups »
+- **Le CST dit** : la maitrise de l'espace disque releve de l'exploitation
+  courante, sans preciser de mecanisme.
+- **Le VPS fait** : `/etc/docker/daemon.json` declare une rotation des logs
+  (50 Mo x 3) et un GC BuildKit (`maxUsedSpace: 25GB`), mais le fichier date du
+  2026-09-03 alors que le demon tourne sans interruption depuis le 2026-07-08 :
+  ces reglages ne sont lus qu'au demarrage du demon et **n'ont jamais pris
+  effet**. Mesures du 2026-09-05 avant correction :
+  `HostConfig.LogConfig.Config = {}` sur tous les conteneurs, journal de
+  `common-gitlab-ci` a 797 Mo, cache de build a 57 Go pour un plafond declare a
+  25 Go, 25,8 Go d'images inutilisees. Le disque etait a 76 % (146 Go / 193 Go).
+- **Correction a apporter** : documenter dans le CST que la maitrise du disque
+  repose sur deux jobs Ofelia quotidiens (`prune-workspaces-daily` 05:30,
+  `prune-docker-images-daily` 05:45) et non sur les seuls reglages du demon,
+  qui restent a activer lors de la prochaine fenetre de maintenance.
+- **Pourquoi** : un redemarrage du demon Docker redemarre tous les conteneurs
+  de la plateforme ; il n'a pas ete realise, la plateforme etant utilisee par
+  l'equipe. Les scripts appliquent le meme plafond sans interruption de service.
+
+### [2026-09-05] Politique de retention Harbor documentee mais jamais configuree
+
+- **Statut** : A REPORTER
+- **Section CST** : 7.5 « Pourquoi un backup hebdomadaire pour Harbor plutot que
+  quotidien ? » (l.1785) - « Harbor conserve les 10 dernieres versions des tags
+  Docker de travail (develop-*, main-*) par projet, retient sans limite les tags
+  de release (vX.Y.Z) [...] et purge les images non taguees apres 7 jours »
+- **Le CST dit** : cette politique est appliquee, et sert de justification au
+  rythme hebdomadaire de la sauvegarde du registre (« le contenu sauvegarde est
+  donc deja nettoye de l'essentiel du superflu »).
+- **Le VPS fait** : jusqu'au 2026-09-05, **aucune politique n'etait attachee au
+  projet** `furious-ducks` (l'API `projects/furious-ducks/metadatas` ne renvoyait
+  pas de `retention_id`) et **aucune garbage collection n'etait planifiee**. Le
+  registre contenait 130 artefacts sur `thetiptop` (94 tags `develop-*`) et 38
+  sur `thetiptop-api`. La procedure existait bien dans `tools/04-harbor.md`
+  sections 3.9 et 3.10, mais n'avait jamais ete executee : la sauvegarde
+  hebdomadaire portait donc sur un registre non purge, contrairement a la
+  justification du CST. Desormais : politique `retention_id = 1` planifiee le
+  samedi 05:00, GC planifiee le samedi 07:00 avec `delete_untagged`. Premiere
+  execution : 130 -> 29 et 38 -> 12 artefacts, `/data/registry` de 3,5 Go a
+  870 Mo, les quatre tags `v*`, `latest` et les images deployees conserves
+  (controle avant/apres).
+- **Correction a apporter** : aucune sur le fond - le CST decrivait la cible,
+  elle est maintenant reelle. Preciser seulement les horaires (samedi 05:00 et
+  07:00) et que la purge des images non taguees est portee par la GC.
+- **Pourquoi** : ecart typique entre une procedure ecrite et son application.
+  Il ne se voyait pas dans la documentation, seulement dans l'etat de Harbor.
+
 ---
 
 ## Ecarts reportes
