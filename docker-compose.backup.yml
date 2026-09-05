@@ -21,6 +21,12 @@
 #     backup-harbor.sh detects the missing path and skips without failing.
 #   - A .env file must define:
 #       MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, RESTIC_PASSWORD
+#     and, for the client project databases dumped by backup-all.sh:
+#       THETIPTOP_DB_USER, THETIPTOP_DB_PASSWORD (DEV + PREPROD, shared
+#       instance), THETIPTOP_DB_PROD_USER, THETIPTOP_DB_PROD_PASSWORD.
+#   - The client project volumes mounted under /backup-sources/projects/
+#     are created by the pipeline (ensureSharedDatabase in ciPipeline.groovy)
+#     and must exist before this stack starts.
 # =============================================================================
 
 services:
@@ -103,6 +109,18 @@ services:
       MATTERMOST_DB_USER: ${MATTERMOST_DB_USER:-mattermost}
       MATTERMOST_DB_NAME: ${MATTERMOST_DB_NAME:-mattermost}
       MATTERMOST_DB_PASSWORD: ${MATTERMOST_DB_PASSWORD}
+      # Client project databases dumped with pg_dump (CST 3.4 a: "bases de
+      # donnees applicatives"), one entry per line:
+      #   <label>:<host>:<database>:<user>:<password>
+      # The password comes last so it may itself contain ':'. The credentials
+      # mirror the Jenkins credentials of each project (thetiptop-db-credentials
+      # for DEV/PREPROD, thetiptop-db-credentials-prod for PROD): rotate both
+      # together. Adding a project = adding its lines here, nothing to change
+      # in backup-all.sh.
+      PROJECT_DB_DUMPS: |
+        thetiptop-prod:thetiptop-db-prod:thetiptop_prod:${THETIPTOP_DB_PROD_USER}:${THETIPTOP_DB_PROD_PASSWORD}
+        thetiptop-preprod:thetiptop-db-shared:thetiptop_preprod:${THETIPTOP_DB_USER}:${THETIPTOP_DB_PASSWORD}
+        thetiptop-dev:thetiptop-db-shared:thetiptop_dev:${THETIPTOP_DB_USER}:${THETIPTOP_DB_PASSWORD}
     volumes:
       # --- CI/CD data volumes (read-only) ---
       - gitlab-config:/backup-sources/gitlab-config:ro
@@ -114,6 +132,16 @@ services:
       - sonarqube-db-data:/backup-sources/sonarqube-db-data:ro
       - mattermost-data:/backup-sources/mattermost-data:ro
       - mattermost-config:/backup-sources/mattermost-config:ro
+      # --- Client project volumes (read-only cold copies, safety net: the
+      #     consistent copy of each database is the pg_dump declared in
+      #     PROJECT_DB_DUMPS above; Redis persists through its AOF file).
+      #     Everything mounted under /backup-sources/projects/ is picked up
+      #     by backup-all.sh without editing the script: one line per volume. ---
+      - thetiptop-db-prod-data:/backup-sources/projects/thetiptop-db-prod-data:ro
+      - thetiptop-db-shared-data:/backup-sources/projects/thetiptop-db-shared-data:ro
+      - thetiptop-redis-prod-data:/backup-sources/projects/thetiptop-redis-prod-data:ro
+      - thetiptop-redis-preprod-data:/backup-sources/projects/thetiptop-redis-preprod-data:ro
+      - thetiptop-redis-shared-data:/backup-sources/projects/thetiptop-redis-shared-data:ro
       # --- Harbor registry (bind mount, not a Docker volume - Harbor is
       #     deployed separately via its own installer, see docs/04-harbor.md).
       #     Host path must match data_volume in harbor.yml, whose default is
@@ -134,6 +162,9 @@ services:
     networks:
       # ci_network is required to reach the database containers for pg_dump
       - ci_network
+      # workflow-network is where the client project databases live
+      # (thetiptop-db-*), reached by pg_dump through PROJECT_DB_DUMPS
+      - workflow-network
       - backup_network
     depends_on:
       minio:
@@ -152,7 +183,7 @@ services:
   #   1st of month 04:00  -> /scripts/retention.sh          (prune old snaps)
   # ---------------------------------------------------------------------------
   ofelia:
-    image: mcuadros/ofelia:v0.3.22
+    image: mcuadros/ofelia:0.3.22
     container_name: common-ofelia-ci
     command: daemon --docker
     volumes:
@@ -175,6 +206,25 @@ services:
       - "ofelia.job-exec.retention-monthly.schedule=0 0 4 1 * *"
       - "ofelia.job-exec.retention-monthly.container=common-backup-manager-ci"
       - "ofelia.job-exec.retention-monthly.command=/scripts/retention.sh"
+      # --- Daily Jenkins workspace pruning at 05:30 ---
+      #     Removes the workspace of branch jobs idle for more than 7 days.
+      #     Build history, reports and archived artefacts are never touched.
+      - "ofelia.job-exec.prune-workspaces-daily.schedule=0 30 5 * * *"
+      - "ofelia.job-exec.prune-workspaces-daily.container=common-jenkins-ci"
+      - "ofelia.job-exec.prune-workspaces-daily.command=bash /opt/furious-ducks/scripts/prune-jenkins-workspaces.sh"
+      - "ofelia.job-exec.prune-workspaces-daily.user=root"
+      # --- Daily local Docker cache pruning at 05:45 ---
+      #     One application image per build accumulates on the host and nothing
+      #     evicts it: Harbor's retention policy governs the registry, not the
+      #     local cache. Release tags (vX.Y.Z), images referenced by a container
+      #     - including the Blue/Green "-previous" standbys - and anything under
+      #     24h old are protected. Also trims the BuildKit cache to the ceiling
+      #     declared in /etc/docker/daemon.json, which the engine only enforces
+      #     after a restart.
+      - "ofelia.job-exec.prune-docker-images-daily.schedule=0 45 5 * * *"
+      - "ofelia.job-exec.prune-docker-images-daily.container=common-jenkins-ci"
+      - "ofelia.job-exec.prune-docker-images-daily.command=bash /opt/furious-ducks/scripts/prune-docker-images.sh"
+      - "ofelia.job-exec.prune-docker-images-daily.user=root"
       # --- Daily DORA metrics refresh at 06:00 (after the 02:00 backup) ---
       - "ofelia.job-exec.dora-metrics-daily.schedule=0 0 6 * * *"
       - "ofelia.job-exec.dora-metrics-daily.container=common-dora-metrics-ci"
@@ -245,4 +295,17 @@ volumes:
     external: true
   mattermost-config:
     name: common-mattermost-config-ci
+    external: true
+
+  # Client project volumes, created by the pipeline with `docker run -v`
+  # (ensureSharedDatabase in ciPipeline.groovy), hence no compose label.
+  thetiptop-db-prod-data:
+    external: true
+  thetiptop-db-shared-data:
+    external: true
+  thetiptop-redis-prod-data:
+    external: true
+  thetiptop-redis-preprod-data:
+    external: true
+  thetiptop-redis-shared-data:
     external: true

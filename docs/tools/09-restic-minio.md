@@ -101,7 +101,7 @@ planification quotidienne prevue par le CST (05h00, apres la sauvegarde de
 | Image           | Custom, base `restic/restic:0.17.0` (voir `infrastructure/backup/Dockerfile`) |
 | Container       | `common-backup-manager-ci`              |
 | Hostname        | `backup-manager` (fige : restic tague les snapshots avec, et `retention.sh --group-by` en depend) |
-| Reseau Docker   | `ci_network` (pour `pg_dump`), `backup_network` |
+| Reseau Docker   | `ci_network` (`pg_dump` SonarQube et Mattermost), `workflow-network` (`pg_dump` des bases projets, cf. `PROJECT_DB_DUMPS`), `backup_network` |
 
 ### Scripts de sauvegarde
 

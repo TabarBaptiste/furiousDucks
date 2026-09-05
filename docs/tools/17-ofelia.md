@@ -50,7 +50,7 @@ Ofelia surveille le socket Docker, lit les labels `ofelia.job-exec.*` sur les co
 
 | Parametre | Valeur |
 |-----------|--------|
-| Image | `mcuadros/ofelia:v0.3.22` |
+| Image | `mcuadros/ofelia:0.3.22` |
 | Container | `common-ofelia-ci` |
 | Volume | `/var/run/docker.sock:ro` (lecture seule) |
 | Reseau | `backup_network` |
@@ -106,7 +106,7 @@ Attention : Ofelia utilise le format Go (6 champs, incluant les secondes) :
 
 Le 6eme champ (jour semaine) suit la convention Go : **0=dimanche**, 1=lundi, ..., 6=samedi.
 
-### Planification des 5 jobs
+### Planification des 7 jobs
 
 | Job | Cron (Ofelia) | Frequence | Conteneur cible | Script execute |
 |-----|---------------|-----------|-----------------|----------------|
@@ -114,11 +114,26 @@ Le 6eme champ (jour semaine) suit la convention Go : **0=dimanche**, 1=lundi, ..
 | `backup-daily` | `0 0 2 * * *` | Quotidien 02:00 | `common-backup-manager-ci` | `/scripts/backup-all.sh` |
 | `verify-weekly` | `0 0 3 * * 0` | Dimanche 03:00 | `common-backup-manager-ci` | `/scripts/verify-integrity.sh` |
 | `retention-monthly` | `0 0 4 1 * *` | 1er du mois 04:00 | `common-backup-manager-ci` | `/scripts/retention.sh` |
+| `prune-workspaces-daily` | `0 30 5 * * *` | Quotidien 05:30 | `common-jenkins-ci` | `/opt/furious-ducks/scripts/prune-jenkins-workspaces.sh` |
+| `prune-docker-images-daily` | `0 45 5 * * *` | Quotidien 05:45 | `common-jenkins-ci` | `/opt/furious-ducks/scripts/prune-docker-images.sh` |
 | `dora-metrics-daily` | `0 0 6 * * *` | Quotidien 06:00 | `common-dora-metrics-ci` | `/scripts/dora_metrics.py` |
 
 L'ordre du dimanche est voulu : backup Harbor (01:00) -> backup quotidien
 (02:00) -> verification d'integrite (03:00), de sorte que le `restic check`
 porte sur des snapshots deja ecrits.
+
+Les deux jobs de menage de 05:30 et 05:45 ciblent **`common-jenkins-ci`** et non
+`common-backup-manager-ci` : ce sont les seuls a avoir besoin de la CLI Docker
+et de la socket, que seul Jenkins possede. Ils tournent apres les sauvegardes
+(un snapshot est ainsi pris avant tout menage) et avant le calcul DORA de
+06:00. Les scripts sont montes depuis le depot par `docker-compose.yml`
+(`./scripts:/opt/furious-ducks/scripts:ro`).
+
+Ce qu'ils nettoient, et pourquoi ils sont necessaires : la politique de
+retention de Harbor gouverne le **registre**, pas le **cache local** de l'hote
+qui tire les images. Sans ces jobs, le VPS accumule une image applicative par
+build (mesure le 2026-09-04 : 25,8 Go d'images inutilisees et 39 Go de cache de
+build recuperable). Voir `../runbook-administration.md` section 10.
 
 ### Role du socket Docker
 

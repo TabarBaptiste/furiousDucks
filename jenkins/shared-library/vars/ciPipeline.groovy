@@ -1504,7 +1504,7 @@ void runLint(String stack, String hostWorkspace) {
                                [ -f "\$dir/eslint.config.js" ]; then
                                 echo "=== Linting \$dir ==="
                                 cd "\$dir"
-                                npx eslint "{src,apps,libs,test}/**/*.ts" --format stylish
+                                npx eslint "{src,apps,libs,test}/**/*.{ts,tsx}" --format stylish
                                 cd ..
                             fi
                         done

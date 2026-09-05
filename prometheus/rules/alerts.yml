@@ -168,11 +168,16 @@ groups:
 
       # -----------------------------------------------------------------------
       # Container memory: high memory usage increases the risk of OOM kills.
+      # Only containers that declare a memory limit are covered: cAdvisor
+      # reports container_spec_memory_limit_bytes = 0 for the others, and
+      # dividing by 0 gives +Inf, which fired this alert on every container
+      # of the host at once (42 alerts on 2026-09-04). Unlimited containers
+      # are covered by HostHighMemoryUsage instead.
       # -----------------------------------------------------------------------
       - alert: ContainerHighMemoryUsage
         expr: >
           (container_memory_usage_bytes{name=~".+"}
-           / container_spec_memory_limit_bytes{name=~".+"}) * 100 > 80
+           / (container_spec_memory_limit_bytes{name=~".+"} > 0)) * 100 > 80
         for: 5m
         labels:
           severity: warning

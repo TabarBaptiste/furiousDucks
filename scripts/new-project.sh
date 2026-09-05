@@ -397,6 +397,11 @@ JENKINS_JOB_XML="<?xml version='1.1' encoding='UTF-8'?>
           <credentialsId>gitlab-api-token</credentialsId>
           <projectOwner>${GITLAB_USER}</projectOwner>
           <projectPath>${GITLAB_USER}/${PROJECT_NAME}</projectPath>
+          <traits>
+            <jenkins.plugins.git.traits.SSHCheckoutTrait>
+              <credentialsId>gitlab-ssh-key-local</credentialsId>
+            </jenkins.plugins.git.traits.SSHCheckoutTrait>
+          </traits>
         </source>
       </jenkins.branch.BranchSource>
     </data>

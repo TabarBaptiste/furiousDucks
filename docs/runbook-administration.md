@@ -6,7 +6,7 @@ Les commandes sont données avec les **vrais noms** du projet pilote **Thé Tip 
 
 ## 0. Identifiants Jenkins de Thé Tip Top
 
-Les mots de passe réels (DB, JWT) ne sont **jamais en clair sur le VPS** : ils sont créés une seule fois dans Jenkins et référencés par un `credentialId`. Pour les consulter/faire tourner : Jenkins → *Manage Jenkins* → *Credentials*.
+Les mots de passe réels (DB, JWT) ne sont **jamais dans le dépôt Git** : ils sont créés une seule fois dans Jenkins et référencés par un `credentialId`. Pour les consulter/faire tourner : Jenkins → *Manage Jenkins* → *Credentials*. Seuls les identifiants Postgres sont aussi recopiés dans `infrastructure/.env` (non versionné, variables `THETIPTOP_DB_*`) pour le dump nocturne de `backup-manager` : les faire tourner en même temps.
 
 | Credential ID Jenkins | Contenu | Utilisé pour |
 |---|---|---|
@@ -176,7 +176,7 @@ Script prêt à l'emploi, voir [`scripts/rollback.sh`](../scripts/rollback.sh) p
 
 ## 8. Backup manuel
 
-Le backup automatique tourne via Ofelia dans `common-backup-manager-ci` (voir [how/03-backup.md](how/03-backup.md)). Il ne dumpe en base logique que SonarQube et Mattermost — les bases des projets clients (dont Thé Tip Top) ne sont sauvegardées qu'au niveau volume Docker, pas en dump logique cohérent.
+Le backup automatique tourne via Ofelia dans `common-backup-manager-ci` (voir [how/03-backup.md](how/03-backup.md)). Il dumpe en base logique SonarQube, Mattermost et les bases Thé Tip Top (`thetiptop_dev`, `thetiptop_preprod`, `thetiptop_prod`, via `PROJECT_DB_DUMPS` dans `docker-compose.backup.yml`), et copie en plus les volumes PostgreSQL et Redis du projet sous `/backup-sources/projects/`. Les identifiants de connexion sont dans `.env` (`THETIPTOP_DB_*`) : les faire tourner en même temps que les credentials Jenkins correspondants.
 
 ```bash
 # Backup complet (tous les volumes de la plateforme CI/CD + dumps logiques SonarQube/Mattermost)
@@ -198,7 +198,7 @@ docker exec -it common-backup-manager-ci /scripts/restore.sh <snapshot_id> /tmp/
 docker exec -it common-backup-manager-ci /scripts/restore.sh <snapshot_id> /tmp/restore-test --volume jenkins-data
 ```
 
-**Dump logique manuel d'une base Thé Tip Top** (recommandé avant toute opération risquée en DEV/PREPROD/PROD, puisque `backup-all.sh` ne le fait pas pour ce projet) :
+**Dump logique manuel d'une base Thé Tip Top** (recommandé avant toute opération risquée en DEV/PREPROD/PROD, pour disposer d'un point de restauration plus récent que le dump nocturne) :
 
 ```bash
 DB_USER="$(docker exec thetiptop-db-shared printenv POSTGRES_USER)"
@@ -232,7 +232,77 @@ docker network inspect workflow-network --format '{{range .Containers}}{{.Name}}
 docker exec thetiptop-preprod getent hosts thetiptop-db-shared
 ```
 
-## 10. Références
+## 10. Maîtrise de l'espace disque
+
+### 10.1 Ce qui tourne automatiquement
+
+Deux jobs Ofelia quotidiens tiennent le disque, en plus de la rétention Restic (cf. [how/03-backup.md](how/03-backup.md)) :
+
+| Quand | Job | Ce qu'il fait |
+|---|---|---|
+| 05:30 | `prune-workspaces-daily` | supprime les workspaces des branches Jenkins inactives depuis 7 jours (l'historique des builds, les rapports et les artefacts archivés ne sont **jamais** touchés) |
+| 05:45 | `prune-docker-images-daily` | supprime les images applicatives du cache local devenues inutiles, puis ramène le cache BuildKit sous 25 Go |
+
+Côté Harbor, deux planifications propres au registre (cf. [tools/04-harbor.md](tools/04-harbor.md) 3.9 et 3.10) : politique de rétention le **samedi 05:00** (10 derniers tags `develop-*`/`main-*`, `v*` et `latest` conservés sans limite), garbage collection le **samedi 07:00**. L'ordre est voulu : rétention → GC → sauvegarde du registre le dimanche 01:00.
+
+`scripts/prune-docker-images.sh` protège explicitement, dans cet ordre : toute image référencée par un container (y compris les `*-previous` arrêtés, cibles du rollback Blue/Green), les tags sémantiques `vX.Y.Z`, le tag `latest`, et tout ce qui a moins de 24 h. Le lancer à blanc avant d'ajuster ses seuils :
+
+```bash
+docker exec common-jenkins-ci bash /opt/furious-ducks/scripts/prune-docker-images.sh --dry-run
+```
+
+### 10.2 Réglages hôte (hors dépôt, à rejouer si le serveur est réinstallé)
+
+`/etc/docker/daemon.json` — rotation des logs de tous les containers (y compris ceux créés dynamiquement par Jenkins, que les compose files ne couvrent pas) et plafond du cache de build :
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "50m", "max-file": "3", "compress": "true" },
+  "builder": { "gc": { "enabled": true, "reservedSpace": "10GB", "maxUsedSpace": "25GB" } }
+}
+```
+
+⚠️ **Ce fichier n'est pas actif en l'état.** Il a été écrit le 2026-09-03 alors que le démon tourne sans interruption depuis le 2026-07-08 : ni le plafond des logs ni le GC BuildKit n'ont jamais été lus. Preuve : `docker inspect <container> --format '{{json .HostConfig.LogConfig.Config}}'` renvoie `{}` sur tous les containers, et le cache de build avait atteint 57 Go pour un plafond déclaré à 25 Go. Les deux réglages ne prennent effet qu'après :
+
+```bash
+sudo systemctl restart docker   # redémarre TOUS les containers -> fenêtre de maintenance
+```
+
+Tant que ce redémarrage n'a pas eu lieu, le job `prune-docker-images-daily` applique le même plafond de cache par une commande explicite, et les logs doivent être tronqués à la main (10.3). Après le redémarrage, la rotation ne s'appliquera qu'aux containers **recréés ensuite** : les containers de longue durée (GitLab, Jenkins) garderont des logs illimités jusqu'à leur prochaine recréation.
+
+`/etc/systemd/journald.conf.d/99-size-limit.conf` — plafond du journal systemd (sans quoi journald monte jusqu'à 10% du disque, soit ~19 Go ici) :
+
+```ini
+[Journal]
+SystemMaxUse=500M
+SystemMaxFileSize=50M
+```
+
+Celui-ci **est** actif : `journalctl --disk-usage` renvoie ~8 Mo.
+
+### 10.3 Nettoyage manuel
+
+```bash
+# Où est passé l'espace ?
+docker system df
+df -h /
+
+# Logs de containers dépassant 20 Mo (déjà expédiés vers Loki, rétention 90j)
+sudo bash -c 'for f in /var/lib/docker/containers/*/*-json.log; do
+  [ "$(stat -c %s "$f")" -gt 20971520 ] && { echo "$f"; truncate -s 0 "$f"; }
+done'
+
+# Images applicatives + cache de build (mêmes protections que le job quotidien)
+docker exec common-jenkins-ci bash /opt/furious-ducks/scripts/prune-docker-images.sh
+
+# Purge plus agressive du cache de build (le prochain build recompile tout : +3 à 5 min)
+docker builder prune -af
+```
+
+⚠️ Ne **jamais** lancer `docker image prune -a` à l'aveugle : cela supprimerait les tags `vX.Y.Z` dont dépendent `scripts/rollback.sh` et le stage `Promote Image`. Utiliser le script, qui les protège.
+
+## 11. Références
 
 - Mapping environnement / nommage : [how/01-environnements-dev-preprod-prod.md](how/01-environnements-dev-preprod-prod.md)
 - Fonctionnement du backup : [how/03-backup.md](how/03-backup.md)
