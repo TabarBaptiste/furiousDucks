@@ -1804,12 +1804,21 @@ void runE2ETests(String framework, String hostWorkspace, String traefikNetwork, 
     // here instead, so CI runs the exact same way a developer already does.
     boolean cypressInWebapp = fileExists('webapp/cypress.config.ts') || fileExists('webapp/cypress.config.js')
     String workDir = cypressInWebapp ? '/e2e/webapp' : '/e2e'
+    // Pinned, like the Playwright image above. On `latest` the E2E stage changed
+    // Cypress version with no commit asking for it: Cypress 16 dropped
+    // `Cypress.env()`, which the specs use to reach the API, so the first Docker
+    // cache refresh on an agent would have taken the whole stage down before the
+    // first test ran - on every project using this library. 15.21.0 is what the
+    // last green builds ran, and agents already hold those layers under the
+    // `latest` tag, so pulling the versioned tag costs nothing. Moving to 16
+    // means migrating the specs to `Cypress.expose()`; both changes have to land
+    // together, since the replacement API does not exist in 15.
     sh """
         docker run --rm \
             -v "${hostWorkspace}:/e2e" \
             -w ${workDir} \
             --network ${traefikNetwork} \
-            cypress/included:latest \
+            cypress/included:15.21.0 \
             --config baseUrl=https://${targetDomain} \
             --reporter junit \
             --reporter-options "mochaFile=cypress/reports/e2e-junit.xml"
