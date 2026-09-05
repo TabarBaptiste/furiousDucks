@@ -30,10 +30,10 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "High CPU usage on {{ $labels.instance }}"
+          summary: "Utilisation CPU élevée sur {{ $labels.instance }}"
           description: >
-            CPU usage on {{ $labels.instance }} has been above 85% for the
-            last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+            L'utilisation CPU sur {{ $labels.instance }} dépasse 85% depuis
+            5 minutes. Valeur actuelle : {{ $value | printf "%.1f" }}%.
 
       # -----------------------------------------------------------------------
       # Memory: sustained high memory pressure increases swap usage and the
@@ -46,10 +46,10 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "High memory usage on {{ $labels.instance }}"
+          summary: "Utilisation mémoire élevée sur {{ $labels.instance }}"
           description: >
-            Memory usage on {{ $labels.instance }} has been above 85% for the
-            last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+            L'utilisation mémoire sur {{ $labels.instance }} dépasse 85% depuis
+            5 minutes. Valeur actuelle : {{ $value | printf "%.1f" }}%.
 
       # -----------------------------------------------------------------------
       # Disk (warning): running low on disk space causes build failures,
@@ -63,11 +63,11 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disk space low on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          summary: "Espace disque faible sur {{ $labels.instance }} ({{ $labels.mountpoint }})"
           description: >
-            Disk usage on {{ $labels.instance }} mountpoint {{ $labels.mountpoint }}
-            has been above 85% for the last 5 minutes.
-            Current value: {{ $value | printf "%.1f" }}%.
+            L'utilisation disque sur {{ $labels.instance }}, point de montage
+            {{ $labels.mountpoint }}, dépasse 85% depuis 5 minutes.
+            Valeur actuelle : {{ $value | printf "%.1f" }}%.
 
       # -----------------------------------------------------------------------
       # Disk (critical): nearly full disk requires immediate intervention.
@@ -80,11 +80,11 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Disk space critical on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          summary: "Espace disque critique sur {{ $labels.instance }} ({{ $labels.mountpoint }})"
           description: >
-            Disk usage on {{ $labels.instance }} mountpoint {{ $labels.mountpoint }}
-            has exceeded 95%. Immediate action required.
-            Current value: {{ $value | printf "%.1f" }}%.
+            L'utilisation disque sur {{ $labels.instance }}, point de montage
+            {{ $labels.mountpoint }}, a dépassé 95%. Action immédiate requise.
+            Valeur actuelle : {{ $value | printf "%.1f" }}%.
 
       # -----------------------------------------------------------------------
       # Disk (predictive): linear extrapolation predicts the filesystem will
@@ -99,11 +99,11 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disk on {{ $labels.instance }} ({{ $labels.mountpoint }}) predicted full within 4h"
+          summary: "Disque sur {{ $labels.instance }} ({{ $labels.mountpoint }}) : saturation prévue sous 4h"
           description: >
-            Based on the current trend, the filesystem on {{ $labels.instance }}
-            mountpoint {{ $labels.mountpoint }} is predicted to run out of space
-            within the next 4 hours.
+            Selon la tendance actuelle, le système de fichiers sur
+            {{ $labels.instance }}, point de montage {{ $labels.mountpoint }},
+            devrait manquer d'espace dans les 4 prochaines heures.
 
   # ===========================================================================
   # Group 2 - Container Alerts
@@ -143,11 +143,11 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Container {{ $labels.name }} appears to be down"
+          summary: "Le conteneur {{ $labels.name }} semble arrêté"
           description: >
-            cAdvisor has not reported a fresh sample for container
-            {{ $labels.name }} in over 90 seconds. It may have stopped,
-            crashed, or been removed. Current staleness:
+            cAdvisor n'a signalé aucun échantillon récent pour le conteneur
+            {{ $labels.name }} depuis plus de 90 secondes. Il a peut-être été
+            arrêté, a planté, ou a été supprimé. Ancienneté actuelle :
             {{ $value | printf "%.0f" }}s.
 
       # -----------------------------------------------------------------------
@@ -161,10 +161,10 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "High CPU usage in container {{ $labels.name }}"
+          summary: "Utilisation CPU élevée dans le conteneur {{ $labels.name }}"
           description: >
-            Container {{ $labels.name }} CPU usage has been above 80% for the
-            last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+            L'utilisation CPU du conteneur {{ $labels.name }} dépasse 80%
+            depuis 5 minutes. Valeur actuelle : {{ $value | printf "%.1f" }}%.
 
       # -----------------------------------------------------------------------
       # Container memory: high memory usage increases the risk of OOM kills.
@@ -182,10 +182,10 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "High memory usage in container {{ $labels.name }}"
+          summary: "Utilisation mémoire élevée dans le conteneur {{ $labels.name }}"
           description: >
-            Container {{ $labels.name }} memory usage has been above 80% of its
-            limit for the last 5 minutes. Current value: {{ $value | printf "%.1f" }}%.
+            L'utilisation mémoire du conteneur {{ $labels.name }} dépasse 80%
+            de sa limite depuis 5 minutes. Valeur actuelle : {{ $value | printf "%.1f" }}%.
 
       # -----------------------------------------------------------------------
       # Container restarts: frequent restarts indicate a crash loop.
@@ -197,10 +197,10 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Container {{ $labels.name }} is restarting frequently"
+          summary: "Le conteneur {{ $labels.name }} redémarre fréquemment"
           description: >
-            Container {{ $labels.name }} has restarted more than 3 times in the
-            last 5 minutes. This may indicate a crash loop.
+            Le conteneur {{ $labels.name }} a redémarré plus de 3 fois au
+            cours des 5 dernières minutes. Cela peut indiquer une boucle de plantage.
 
   # ===========================================================================
   # Group 3 - CI/CD Services Alerts
@@ -218,10 +218,10 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Jenkins is unreachable"
+          summary: "Jenkins est inaccessible"
           description: >
-            The Jenkins CI server (job={{ $labels.job }}) has been unreachable
-            for more than 2 minutes. All CI pipelines are blocked.
+            Le serveur Jenkins CI (job={{ $labels.job }}) est inaccessible
+            depuis plus de 2 minutes. Tous les pipelines CI sont bloqués.
 
       # -----------------------------------------------------------------------
       # GitLab down: blocks all source code operations and MR workflows.
@@ -232,10 +232,10 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "GitLab is unreachable"
+          summary: "GitLab est inaccessible"
           description: >
-            The GitLab instance (job={{ $labels.job }}) has been unreachable
-            for more than 2 minutes. Source code management is unavailable.
+            L'instance GitLab (job={{ $labels.job }}) est inaccessible
+            depuis plus de 2 minutes. La gestion du code source est indisponible.
 
       # -----------------------------------------------------------------------
       # Traefik error rate: a high 5xx rate indicates upstream service failures
@@ -252,11 +252,11 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Traefik 5xx error rate is high"
+          summary: "Taux d'erreurs 5xx élevé sur Traefik"
           description: >
-            The Traefik reverse proxy is returning HTTP 5xx errors at a rate
-            above 5% over the last 5 minutes.
-            Current error rate: {{ $value | printf "%.2f" }}%.
+            Le reverse proxy Traefik retourne des erreurs HTTP 5xx à un taux
+            supérieur à 5% sur les 5 dernières minutes.
+            Taux d'erreur actuel : {{ $value | printf "%.2f" }}%.
 
   # ===========================================================================
   # Group 4 - Backup Alerts
@@ -277,10 +277,10 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Backup job {{ $labels.job }} failed"
+          summary: "Échec du job de sauvegarde {{ $labels.job }}"
           description: >
-            The backup job {{ $labels.job }} has reported a failure.
-            Investigate immediately to prevent data loss.
+            Le job de sauvegarde {{ $labels.job }} a signalé un échec.
+            Investiguez immédiatement pour éviter toute perte de données.
 
       # -----------------------------------------------------------------------
       # Backup too old: no successful backup in the last 26 hours. The 26h
@@ -293,7 +293,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "No recent backup for {{ $labels.job }}"
+          summary: "Aucune sauvegarde récente pour {{ $labels.job }}"
           description: >
-            No successful backup has been recorded for job {{ $labels.job }}
-            in the last 26 hours. The daily backup schedule may be broken.
+            Aucune sauvegarde réussie n'a été enregistrée pour le job
+            {{ $labels.job }} depuis 26 heures. La planification quotidienne
+            des sauvegardes est peut-être en panne.
