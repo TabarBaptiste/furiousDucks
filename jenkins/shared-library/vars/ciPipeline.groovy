@@ -1351,18 +1351,24 @@ void notifyBuild(String status, String projectName, String deployEnv = '', Strin
         'UNSTABLE': ':warning:'
     ]
     String emoji = emojiMap[status] ?: ':question:'
+    Map<String, String> statusLabelMap = [
+        'SUCCESS' : 'RÉUSSI',
+        'FAILURE' : 'ÉCHEC',
+        'UNSTABLE': 'INSTABLE'
+    ]
+    String statusLabel = statusLabelMap[status] ?: status
 
     // env.STAGE_NAME reflects the stage that was executing when the pipeline
     // hit this post block, so on failure it points at the stage that failed.
     String failedStageLine = (status == 'FAILURE' && env.STAGE_NAME) ?
-        "Stage: '${env.STAGE_NAME}'\n" : ''
+        "Étape : '${env.STAGE_NAME}'\n" : ''
 
-    String summary = "${emoji} **${projectName}** - Build #${env.BUILD_NUMBER} **${status}**\n" +
-        "Branch: '${env.BRANCH_NAME ?: 'N/A'}'\n" +
-        "Commit: '${env.GIT_COMMIT_MSG ?: 'N/A'}' by ${env.GIT_COMMIT_AUTHOR ?: 'N/A'}\n" +
+    String summary = "${emoji} **${projectName}** - Build #${env.BUILD_NUMBER} **${statusLabel}**\n" +
+        "Branche : '${env.BRANCH_NAME ?: 'N/A'}'\n" +
+        "Commit : '${env.GIT_COMMIT_MSG ?: 'N/A'}' par ${env.GIT_COMMIT_AUTHOR ?: 'N/A'}\n" +
         failedStageLine +
-        "Duration: ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}\n" +
-        "[View Build](${env.BUILD_URL})"
+        "Durée : ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}\n" +
+        "[Voir le build](${env.BUILD_URL})"
 
     echo summary
 

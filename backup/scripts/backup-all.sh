@@ -65,7 +65,7 @@ notify_failure() {
   local message="$1"
   log "ERROR" "Sending failure notification..."
   curl -sf -X POST -H 'Content-type: application/json' \
-    --data "{\"text\":\"[BACKUP FAILURE] ${message}\"}" \
+    --data "{\"text\":\"[ÉCHEC SAUVEGARDE] ${message}\"}" \
     "${WEBHOOK_URL}" >> "${LOG_FILE}" 2>&1 || \
     log "WARN" "Failed to send notification to webhook"
 }
@@ -74,7 +74,7 @@ cleanup() {
   local exit_code=$?
   if [[ ${exit_code} -ne 0 ]]; then
     log "ERROR" "Backup failed with exit code ${exit_code}"
-    notify_failure "Backup script exited with code ${exit_code}. Check ${LOG_FILE} for details."
+    notify_failure "Le script de sauvegarde s'est terminé avec le code ${exit_code}. Consultez ${LOG_FILE} pour plus de détails."
   fi
 }
 trap cleanup EXIT
@@ -276,7 +276,7 @@ log "INFO" "========== Backup finished at $(date '+%Y-%m-%d %H:%M:%S') =========
 log "INFO" "Duration: ${TOTAL_DURATION}s | Succeeded: ${SUCCEEDED} | Failed: ${FAILED}"
 
 if [[ ${FAILED} -gt 0 ]]; then
-  notify_failure "${FAILED} volume(s) failed to back up. Succeeded: ${SUCCEEDED}. Duration: ${TOTAL_DURATION}s."
+  notify_failure "${FAILED} volume(s) n'ont pas pu être sauvegardés. Réussis : ${SUCCEEDED}. Durée : ${TOTAL_DURATION}s."
   push_metrics 1
   exit 1
 fi

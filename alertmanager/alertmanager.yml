@@ -104,9 +104,9 @@ receivers:
       - api_url_file: '/etc/alertmanager/secrets/mattermost_webhook'
         channel: 'devops-alerts'
         send_resolved: true
-        title: '{{ if eq .Status "firing" }}FIRING{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
+        title: '{{ if eq .Status "firing" }}DÉCLENCHÉE{{ else }}RÉSOLUE{{ end }} : {{ .GroupLabels.alertname }}'
         text: >-
-          *Severity:* {{ .CommonLabels.severity }}
+          *Sévérité :* {{ .CommonLabels.severity }}
           {{ range .Alerts }}
           - {{ .Annotations.summary }}{{ .Annotations.description }}
           {{ end }}

@@ -197,10 +197,11 @@ void runK6LoadTest(Map args) {
 // =============================================================================
 void notifyK6(String status, String projectName, String targetUrl, String vus, String duration) {
     String emoji = (status == 'FAILURE') ? ':x:' : ':warning:'
-    String summary = "${emoji} **${projectName}** - Test de charge K6 #${env.BUILD_NUMBER} **${status}**\n" +
-        "Cible: ${targetUrl}\n" +
-        "Charge: ${vus} VUs / ${duration}\n" +
-        "Durée: ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}\n" +
+    String statusLabel = (status == 'FAILURE') ? 'ÉCHEC' : 'INSTABLE'
+    String summary = "${emoji} **${projectName}** - Test de charge K6 #${env.BUILD_NUMBER} **${statusLabel}**\n" +
+        "Cible : ${targetUrl}\n" +
+        "Charge : ${vus} VUs / ${duration}\n" +
+        "Durée : ${currentBuild.durationString?.replace(' and counting', '') ?: 'N/A'}\n" +
         "[Voir le build](${env.BUILD_URL})"
 
     echo summary

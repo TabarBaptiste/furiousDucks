@@ -51,7 +51,7 @@ notify_failure() {
   local message="$1"
   log "ERROR" "Sending failure alert..."
   curl -sf -X POST -H 'Content-type: application/json' \
-    --data "{\"text\":\"[RETENTION ALERT] ${message}\"}" \
+    --data "{\"text\":\"[ALERTE RÉTENTION] ${message}\"}" \
     "${WEBHOOK_URL}" >> "${LOG_FILE}" 2>&1 || \
     log "WARN" "Failed to send notification to webhook"
 }
@@ -60,7 +60,7 @@ cleanup() {
   local exit_code=$?
   if [[ ${exit_code} -ne 0 ]]; then
     log "ERROR" "Retention script failed with exit code ${exit_code}"
-    notify_failure "Retention cleanup exited with code ${exit_code}. Check ${LOG_FILE}."
+    notify_failure "Le nettoyage de rétention s'est terminé avec le code ${exit_code}. Consultez ${LOG_FILE}."
   fi
 }
 trap cleanup EXIT
@@ -145,7 +145,7 @@ if restic check >> "${LOG_FILE}" 2>&1; then
   log "INFO" "Post-prune integrity check PASSED"
 else
   log "ERROR" "Post-prune integrity check FAILED"
-  notify_failure "Repository integrity check failed after pruning. Removed ${CLEANED} snapshot(s)."
+  notify_failure "La vérification d'intégrité du dépôt a échoué après le nettoyage. ${CLEANED} snapshot(s) supprimé(s)."
   exit 1
 fi
 

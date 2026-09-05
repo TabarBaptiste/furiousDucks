@@ -50,7 +50,7 @@ notify_failure() {
   local message="$1"
   log "ERROR" "Sending failure notification..."
   curl -sf -X POST -H 'Content-type: application/json' \
-    --data "{\"text\":\"[BACKUP FAILURE] ${message}\"}" \
+    --data "{\"text\":\"[ÉCHEC SAUVEGARDE] ${message}\"}" \
     "${WEBHOOK_URL}" >> "${LOG_FILE}" 2>&1 || \
     log "WARN" "Failed to send notification to webhook"
 }
@@ -59,7 +59,7 @@ cleanup() {
   local exit_code=$?
   if [[ ${exit_code} -ne 0 ]]; then
     log "ERROR" "Harbor backup failed with exit code ${exit_code}"
-    notify_failure "Harbor registry backup exited with code ${exit_code}. Check ${LOG_FILE} for details."
+    notify_failure "La sauvegarde du registre Harbor s'est terminée avec le code ${exit_code}. Consultez ${LOG_FILE} pour plus de détails."
   fi
 }
 trap cleanup EXIT

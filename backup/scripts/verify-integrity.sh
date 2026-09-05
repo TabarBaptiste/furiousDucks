@@ -40,7 +40,7 @@ notify_failure() {
   local message="$1"
   log "ERROR" "Sending failure alert..."
   curl -sf -X POST -H 'Content-type: application/json' \
-    --data "{\"text\":\"[BACKUP INTEGRITY ALERT] ${message}\"}" \
+    --data "{\"text\":\"[ALERTE INTÉGRITÉ SAUVEGARDE] ${message}\"}" \
     "${WEBHOOK_URL}" >> "${LOG_FILE}" 2>&1 || \
     log "WARN" "Failed to send notification to webhook"
 }
@@ -49,7 +49,7 @@ cleanup() {
   local exit_code=$?
   if [[ ${exit_code} -ne 0 ]]; then
     log "ERROR" "Integrity verification failed with exit code ${exit_code}"
-    notify_failure "Integrity check exited with code ${exit_code}. Check ${LOG_FILE}."
+    notify_failure "La vérification d'intégrité s'est terminée avec le code ${exit_code}. Consultez ${LOG_FILE}."
   fi
 }
 trap cleanup EXIT
@@ -80,7 +80,7 @@ if restic check >> "${LOG_FILE}" 2>&1; then
   log "INFO" "Repository integrity check PASSED"
 else
   log "ERROR" "Repository integrity check FAILED"
-  notify_failure "restic check failed - repository may be corrupted."
+  notify_failure "La vérification restic a échoué - le dépôt est peut-être corrompu."
   exit 1
 fi
 
@@ -116,7 +116,7 @@ SNAPSHOT_COUNT="$(echo "${LATEST_SNAPSHOT_JSON}" | grep -o '"time"' | wc -l)"
 
 if [[ "${SNAPSHOT_COUNT}" -eq 0 ]]; then
   log "ERROR" "No snapshots found in the repository"
-  notify_failure "No snapshots exist in the backup repository."
+  notify_failure "Aucun snapshot n'existe dans le dépôt de sauvegarde."
   exit 1
 fi
 
@@ -134,7 +134,7 @@ LATEST_EPOCH="$(date -d "${LATEST_TIME}" +%s 2>/dev/null)" || {
   CLEANED_TIME="$(echo "${LATEST_TIME}" | sed 's/\.[0-9]*//; s/+.*/Z/')"
   LATEST_EPOCH="$(date -d "${CLEANED_TIME}" +%s 2>/dev/null)" || {
     log "ERROR" "Could not parse snapshot timestamp '${LATEST_TIME}'"
-    notify_failure "Freshness check could not parse snapshot timestamp '${LATEST_TIME}'."
+    notify_failure "La vérification de fraîcheur n'a pas pu analyser l'horodatage du snapshot '${LATEST_TIME}'."
     exit 1
   }
 }
@@ -146,7 +146,7 @@ MAX_AGE_SECONDS=$(( MAX_AGE_HOURS * 3600 ))
 
 if [[ ${AGE_SECONDS} -gt ${MAX_AGE_SECONDS} ]]; then
   log "ERROR" "Latest snapshot is ${AGE_HOURS} hours old (threshold: ${MAX_AGE_HOURS}h)"
-  notify_failure "Latest backup snapshot is ${AGE_HOURS} hours old, exceeding the ${MAX_AGE_HOURS}-hour threshold."
+  notify_failure "Le dernier snapshot de sauvegarde a ${AGE_HOURS} heures, dépassant le seuil de ${MAX_AGE_HOURS} heures."
   exit 1
 fi
 
