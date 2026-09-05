@@ -244,6 +244,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Jenkins CasC configuration
       - ./jenkins/casc:/var/jenkins_home/casc:ro
+      # Maintenance scripts executed by the scheduled Ofelia jobs (see
+      # docker-compose.backup.yml). Jenkins is the only container that has both
+      # the Docker CLI and the mounted socket, so the housekeeping that needs
+      # to talk to the engine runs here rather than in a container of its own.
+      - ./scripts:/opt/furious-ducks/scripts:ro
     labels:
       # Enable Traefik routing
       - "traefik.enable=true"

@@ -183,7 +183,7 @@ services:
   #   1st of month 04:00  -> /scripts/retention.sh          (prune old snaps)
   # ---------------------------------------------------------------------------
   ofelia:
-    image: mcuadros/ofelia:v0.3.22
+    image: mcuadros/ofelia:0.3.22
     container_name: common-ofelia-ci
     command: daemon --docker
     volumes:
@@ -206,6 +206,25 @@ services:
       - "ofelia.job-exec.retention-monthly.schedule=0 0 4 1 * *"
       - "ofelia.job-exec.retention-monthly.container=common-backup-manager-ci"
       - "ofelia.job-exec.retention-monthly.command=/scripts/retention.sh"
+      # --- Daily Jenkins workspace pruning at 05:30 ---
+      #     Removes the workspace of branch jobs idle for more than 7 days.
+      #     Build history, reports and archived artefacts are never touched.
+      - "ofelia.job-exec.prune-workspaces-daily.schedule=0 30 5 * * *"
+      - "ofelia.job-exec.prune-workspaces-daily.container=common-jenkins-ci"
+      - "ofelia.job-exec.prune-workspaces-daily.command=bash /opt/furious-ducks/scripts/prune-jenkins-workspaces.sh"
+      - "ofelia.job-exec.prune-workspaces-daily.user=root"
+      # --- Daily local Docker cache pruning at 05:45 ---
+      #     One application image per build accumulates on the host and nothing
+      #     evicts it: Harbor's retention policy governs the registry, not the
+      #     local cache. Release tags (vX.Y.Z), images referenced by a container
+      #     - including the Blue/Green "-previous" standbys - and anything under
+      #     24h old are protected. Also trims the BuildKit cache to the ceiling
+      #     declared in /etc/docker/daemon.json, which the engine only enforces
+      #     after a restart.
+      - "ofelia.job-exec.prune-docker-images-daily.schedule=0 45 5 * * *"
+      - "ofelia.job-exec.prune-docker-images-daily.container=common-jenkins-ci"
+      - "ofelia.job-exec.prune-docker-images-daily.command=bash /opt/furious-ducks/scripts/prune-docker-images.sh"
+      - "ofelia.job-exec.prune-docker-images-daily.user=root"
       # --- Daily DORA metrics refresh at 06:00 (after the 02:00 backup) ---
       - "ofelia.job-exec.dora-metrics-daily.schedule=0 0 6 * * *"
       - "ofelia.job-exec.dora-metrics-daily.container=common-dora-metrics-ci"
