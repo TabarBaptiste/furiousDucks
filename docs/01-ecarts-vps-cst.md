@@ -586,3 +586,48 @@ Format d'une entree :
   lire 70% comme un plafond a ne pas depasser plutot qu'un minimum a ne
   jamais repasser sous — et ne trace pas que `thetiptop` applique deja un
   standard de couverture plus exigeant que celui de l'agence.
+
+### [2026-09-06] Quality Gate SonarQube : le CST decrit un gate "Furious Ducks" a 70% qui n'existe pas ; le gate reel est "Sonar way", a 80% sur le nouveau code
+
+- **Statut** : A REPORTER
+- **Section CST** : 4., tableau des criteres de passage (l.1393) « Quality Gate
+  SonarQube ? | Automatique | Maintient les standards de qualite de l'agence
+  (couverture > 70%, pas de vulnerabilites critiques) » ; 3.2, specificites
+  PREPROD (l.1494) « Quality Gate strict | Couverture >= 70%, 0 vulnerabilite
+  critique, rating A ». Memes valeurs reprises dans `docs/00-getting-started.md`
+  (l.270, 555) et `docs/tools/05-sonarqube.md` (l.10, 53, 118, 291), qui decrivent
+  un gate nomme « Furious Ducks » avec ces conditions.
+- **Le CST dit** : le quality gate applicable exige une couverture >= 70%,
+  0 vulnerabilite critique et un rating A, sans preciser si cette couverture
+  porte sur l'ensemble du projet ou sur le code nouvellement ecrit.
+- **Le VPS fait** : interrogation directe de l'API `common-sonarqube-ci`
+  (`GET /api/qualitygates/list`, `GET /api/qualitygates/get_by_project?project=thetiptop`) :
+  aucun gate « Furious Ducks » n'existe sur le serveur. Le seul gate present
+  est **`Sonar way`** (integre, `isBuiltIn: true`), et `thetiptop` y est
+  rattache par defaut. Ses conditions reelles (`GET /api/qualitygates/show?name=Sonar%20way`) :
+  `new_coverage < 80` (echec), `new_violations > 0` (echec), `new_duplicated_lines_density > 3` (echec),
+  `new_security_hotspots_reviewed < 100` (echec) — toutes portant sur le
+  **nouveau code** (delta depuis la derniere analyse de reference), pas sur le
+  projet entier. Il n'existe ni condition `rating`, ni condition de
+  vulnerabilite critique au sens litteral : `new_violations > 0` est en
+  pratique plus strict (bloque sur toute nouvelle issue, quelle que soit sa
+  severite).
+- **Correction a apporter** : remplacer les deux occurrences du CST (l.1393,
+  l.1494) par les conditions reelles du gate `Sonar way` sur le nouveau code
+  (couverture >= 80%, 0 nouvelle issue, duplication <= 3%, 100% des hotspots
+  de securite revus), et soit aligner `00-getting-started.md` et
+  `tools/05-sonarqube.md` sur ces valeurs, soit creer effectivement un gate
+  custom « Furious Ducks » a 70% sur SonarQube si ce seuil reste la cible
+  voulue pour l'agence (auquel cas l'associer explicitement au projet et
+  revalider le CST en consequence).
+- **Pourquoi** : c'est le meme type d'ecart que l'entree REPORTE du
+  2026-08-27 sur la retention Harbor - une procedure/un seuil documente mais
+  jamais applique sur l'outil reel. Ici l'ecart est plus net : le seuil
+  documente (70%, gate custom) n'a jamais existe sur le serveur, celui qui
+  s'applique reellement (80%, `Sonar way`) est a la fois plus strict et de
+  portee differente (nouveau code, pas le projet entier) — ce qui a un effet
+  direct sur ce qui bloque ou non un build en PREPROD/PROD. A rapprocher de
+  l'entree du 2026-09-03 sur les seuils Jest locaux : ces seuils par-projet
+  restent corrects et independants de ce constat, mais leur justification
+  ("plancher organisationnel a 70% verifie par le Quality Gate SonarQube")
+  doit etre mise a jour avec le vrai seuil.

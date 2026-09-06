@@ -34,6 +34,8 @@ ciPipeline(
     // Load testing is NOT here: it runs as its own scheduled job, see
     // Jenkinsfile.k6.thetiptop.
     runE2E        : true,
+    // Les specs vivent dans webapp/cypress/e2e (cf. webapp/cypress.config.ts)
+    e2eFramework  : 'cypress',
     runZap        : true,   // OWASP ZAP baseline against PREPROD
 
     // Comité de pilotage (cf. cahier des charges). PREPROD notifies the people
@@ -83,8 +85,8 @@ ciPipeline(
     // API domains (one per environment)
     devApiDomain    : "${projectName}-api-dev.wk-archi-o24a-4-5-g1.fr",
     preprodApiDomain: "${projectName}-api-preprod.wk-archi-o24a-4-5-g1.fr",
-    // PROD API -> sous-domaine du domaine site internet (dsp5)
-    prodApiDomain   : "api.dsp5-archi-o24a-4-5-g1.fr",
+    // PROD API
+    prodApiDomain   : "${projectName}-api.wk-archi-o24a-4-5-g1.fr",
 
     // Environment-independent API variables only. FRONTEND_URL and CORS_ORIGINS
     // are derived by the shared library from the target environment's frontend
