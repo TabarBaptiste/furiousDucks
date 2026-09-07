@@ -130,6 +130,34 @@ Format d'une entree :
 - **Pourquoi** : le CST decrit une surface d'exposition plus large que la
   realite ; a l'oral, annoncer la version la plus stricte, qui est la vraie.
 
+### [2026-09-07] Jenkins execute les builds directement sur le controleur (2 executeurs actifs sur le master)
+
+- **Statut** : A REPORTER
+- **Section CST** : aucune — ni le nombre d'executeurs du controleur, ni la
+  presence/absence d'agents Jenkins dedies n'est mentionnee dans le CST
+  actuel. Consigne ici plutot que dans le CST : voir "Pourquoi".
+- **Constat** : `ciPipeline.groovy` declare `agent any` et le controleur
+  Jenkins est configure avec 2 executeurs actifs ; chaque etape du pipeline
+  (Lint, Tests, scans, build) s'execute donc directement sur le noeud
+  principal, via des conteneurs `docker run` jetables lances depuis sa propre
+  socket Docker montee. Aucun agent Jenkins distant/dedie n'est utilise.
+- **Le probleme** : Jenkins deconseille explicitement de batir sur le noeud
+  master pour des raisons de securite (acces direct du build au contexte du
+  controleur, a ses credentials et a sa JVM) et recommande de regler le
+  nombre d'executeurs du noeud principal a 0, en deportant l'execution sur
+  des agents dedies.
+- **Correction a apporter** : pas au CST — la remediation porte sur
+  l'infrastructure elle-meme : mettre `numExecutors: 0` sur le controleur
+  dans le JCasC et introduire des agents Docker dedies (les templates JCasC
+  existent deja mais ne sont pas utilises) pour executer les etapes du
+  pipeline hors du contexte du controleur.
+- **Pourquoi consigne ici et pas dans le CST** : documenter ce choix dans le
+  CST (document de reference, pas un audit de securite) reviendrait a
+  presenter une pratique deconseillee par l'outil lui-meme comme un fait
+  d'architecture acquis. Le sujet reste neanmoins reel et a traiter — il est
+  donc trace ici pour ne pas se perdre, en attendant la mise en place
+  d'agents dedies.
+
 ### [2026-09-04] Reseaux Docker : roles inverses et environnements projets sur workflow-network
 
 - **Statut** : A REPORTER

@@ -6,10 +6,11 @@
 - Quality gates automatiques dans le pipeline CI/CD
 - **Port** : `9000` (via Traefik)
 - **Sous-domaine** : `sonar.wk-archi-o24a-4-5-g1.fr`
-- **Quality gate par defaut** :
-  - Couverture de code >= 70%
-  - 0 vulnerabilite critique
-  - Rating A sur fiabilite, securite et maintenabilite
+- **Quality gate applique** : le gate integre "Sonar way" (`isBuiltIn: true`), evalue sur le nouveau code uniquement :
+  - Couverture sur le nouveau code >= 80%
+  - 0 nouvelle issue (toute severite confondue)
+  - Duplication sur le nouveau code <= 3%
+  - 100% des security hotspots revus
 - **Suivi de la dette technique** par projet dans le temps (evolution visible dans le dashboard)
 
 ## 2. Configuration
@@ -46,17 +47,20 @@ verdict est ensuite exploite selon l'environnement cible :
 Un timeout de 5 minutes sur l'attente du gate passe le build en `UNSTABLE`
 sans l'interrompre.
 
-### Quality Gate "Furious Ducks"
+### Quality Gate "Sonar way"
 
-- Quality gate personnalise nomme "Furious Ducks"
-- Conditions :
-  - Couverture sur le nouveau code >= 70%
-  - 0 nouvelle vulnerabilite critique ou bloquante
-  - 0 nouveau bug critique ou bloquant
-  - Rating de fiabilite : A
-  - Rating de securite : A
-  - Rating de maintenabilite : A
-  - Ratio de duplication sur le nouveau code < 3%
+- Gate integre a SonarQube (`isBuiltIn: true`), aucune creation manuelle
+  necessaire ; `thetiptop` y est rattache par defaut.
+- Conditions reelles (`GET /api/qualitygates/show?name=Sonar%20way`), toutes
+  evaluees sur le **nouveau code** (delta depuis la derniere analyse de
+  reference), pas sur le projet entier :
+  - `new_coverage < 80` -> echec
+  - `new_violations > 0` -> echec (bloque sur toute nouvelle issue, quelle que
+    soit sa severite ; il n'existe pas de condition distincte par gravite)
+  - `new_duplicated_lines_density > 3` -> echec
+  - `new_security_hotspots_reviewed < 100` -> echec
+- Il n'existe ni condition de `rating` (fiabilite/securite/maintenabilite), ni
+  condition portant sur la couverture globale du projet.
 
 ### Projets
 
@@ -106,25 +110,18 @@ docker logs -f common-sonarqube-ci
 5. **Generate** : copie immediatement le token (jamais re-affiche)
 6. Va dans Jenkins > Credentials, et met le token dans le credential `sonarqube-token`
 
-### 3.5 Creer le Quality Gate "Furious Ducks"
+### 3.5 Verifier le Quality Gate "Sonar way"
 
-1. **Quality Gates > Create**
-2. Name : `Furious Ducks`
-3. **Save**
-4. Avec le quality gate selectionne, clique **Add Condition** plusieurs fois pour ajouter :
+Aucune creation manuelle : le gate integre "Sonar way" est deja present et
+"Set as Default". Verifie simplement ses conditions dans **Quality Gates >
+Sonar way** :
 
 | Metric | Operator | Threshold | On |
 |--------|----------|-----------|-----|
-| Coverage | is less than | 70% | New Code |
+| Coverage | is less than | 80% | New Code |
+| Issues | is greater than | 0 | New Code |
 | Duplicated Lines (%) | is greater than | 3% | New Code |
-| Maintainability Rating | is worse than | A | New Code |
-| Reliability Rating | is worse than | A | New Code |
-| Security Rating | is worse than | A | New Code |
 | Security Hotspots Reviewed | is less than | 100% | New Code |
-| Bugs | is greater than | 0 | New Code (severite Critical/Blocker) |
-| Vulnerabilities | is greater than | 0 | New Code (severite Critical/Blocker) |
-
-5. Une fois les conditions ajoutees : **Set as Default** > clique le bouton.
 
 ### 3.6 Configurer la connexion Jenkins -> SonarQube
 
@@ -238,11 +235,13 @@ Si un bug detecte n'en est pas un :
 
 ### 4.5 Modifier le Quality Gate
 
-Si "Furious Ducks" est trop strict ou trop laxiste :
+"Sonar way" est un gate integre, non modifiable directement. Si ses seuils
+sont trop stricts ou trop laxistes pour l'agence :
 
-1. **Quality Gates > Furious Ducks**
-2. Ajouter / supprimer / modifier des conditions
-3. **Save**
+1. **Quality Gates > Sonar way > Copy** (cree un gate personnalise editable a
+   partir des memes conditions)
+2. Ajouter / supprimer / modifier des conditions sur la copie
+3. **Save**, puis **Set as Default** pour qu'il remplace "Sonar way"
 4. La nouvelle config s'applique aux **prochains scans**, pas aux anciens.
 
 ### 4.6 Voir l'evolution de la dette technique
@@ -287,8 +286,8 @@ Resultat attendu : code HTTP 200, reponse JSON avec `"status": "UP"`.
 ### Verifier le quality gate
 
 1. Naviguer vers **Quality Gates**
-2. Verifier que le quality gate "Furious Ducks" existe
-3. Verifier que les conditions sont conformes (couverture >= 70%, 0 vulnerabilite critique, rating A)
+2. Verifier que "Sonar way" est bien le gate par defaut (badge "Default")
+3. Verifier que les conditions sont conformes (couverture nouveau code >= 80%, 0 nouvelle issue, duplication <= 3%, 100% hotspots revus)
 
 ### Lancer un scan de test
 

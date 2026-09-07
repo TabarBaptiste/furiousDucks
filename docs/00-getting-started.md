@@ -265,10 +265,7 @@ Plus de details : `tools/03-jenkins.md`.
 
 1. Login : `admin` / `admin` (mot de passe par defaut SonarQube).
 2. SonarQube te demande immediatement de **changer le mot de passe**.
-3. Cree le **Quality Gate "Furious Ducks"** :
-   - **Quality Gates > Create > "Furious Ducks"**
-   - Ajoute les conditions : Coverage on New Code >= 70%, 0 critical bug, 0 critical vulnerability, rating A.
-   - **Set as Default**.
+3. Le quality gate applique est le gate integre **"Sonar way"** (deja "Set as Default", aucune creation manuelle necessaire) : Coverage on New Code >= 80%, 0 new issue, duplicated lines on new code <= 3%, 100% des security hotspots revus.
 4. **Genere un token Jenkins** : My Account > Security > Generate Token, nom `jenkins`. **Note le token**.
 5. Retourne dans Jenkins et ajoute le token dans le credential `sonarqube-token` cree precedemment.
 
@@ -552,7 +549,7 @@ docker exec common-backup-manager-ci curl -f http://common-minio-ci:9000/minio/h
 ### Pipeline Jenkins en echec sur "Quality Gate"
 
 - Ouvre SonarQube et regarde le rapport du projet.
-- Le quality gate "Furious Ducks" exige Coverage >= 70% sur le nouveau code, 0 vulnerability critique, etc.
+- Le quality gate "Sonar way" exige Coverage >= 80% sur le nouveau code, 0 new issue, duplication <= 3%, 100% des hotspots revus.
 - Rappel du comportement reel : un gate en echec est **bloquant** sur `main`
   (PREPROD) et sur un tag (PROD), mais seulement **`UNSTABLE`** sur `develop`
   (DEV). Voir `tools/05-sonarqube.md` section 2.
@@ -578,7 +575,7 @@ docker exec common-backup-manager-ci curl -f http://common-minio-ci:9000/minio/h
 - [x] Acces HTTPS a tous les sous-domaines du tableau 1.3 avec certificat valide
 - [x] GitLab : root login OK, mot de passe change, cle SSH ajoutee
 - [x] Jenkins : admin login OK, credentials gitlab/harbor/sonar configures
-- [x] SonarQube : mot de passe change, quality gate "Furious Ducks" cree, token Jenkins genere
+- [x] SonarQube : mot de passe change, quality gate "Sonar way" verifie (defaut), token Jenkins genere
 - [x] Harbor : installe, projet cree, login Docker OK
 - [x] Grafana : datasources Prometheus/Loki vertes, dashboards visibles
 - [x] MinIO : bucket `furious-ducks-backups` cree
