@@ -423,8 +423,8 @@ Le pipeline va :
 - Lancer linter, tests unitaires
 - Analyser avec SonarQube et attendre le quality gate
 - Builder l'image Docker
-- La pousser dans Harbor
 - La scanner avec Trivy
+- La pousser dans Harbor
 - La deployer en DEV (`thetiptop-dev.wk-archi-o24a-4-5-g1.fr`)
 
 ### 5.6 Verifier le deploiement
@@ -466,7 +466,7 @@ git tag -a v1.2.0 -m "Release 1.2.0"
 git push origin v1.2.0
 ```
 
-Le push de tag `vX.Y.Z` declenche le pipeline PREPROD puis attend une **approbation manuelle dans Jenkins** avant le deploiement PROD en Blue/Green.
+Le merge dans `main` declenche automatiquement le pipeline PREPROD. Le push d'un tag `vX.Y.Z` declenche directement le pipeline PROD, qui s'arrete sur une **approbation manuelle dans Jenkins** avant le deploiement en Blue/Green.
 
 ### 6.3 Faire un rollback en cas de probleme
 

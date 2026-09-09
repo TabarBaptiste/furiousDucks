@@ -199,7 +199,13 @@ fi
 if [[ "${WITH_DB}" == true ]]; then
   log "INFO" "Database rollback requested..."
 
-  DB_CONTAINER="${PROJECT_NAME}-db-${ENVIRONMENT}"
+  # Container naming mirrors dbContainerFor() in ciPipeline.groovy: PROD gets
+  # its own isolated container, DEV and PREPROD share one ("-db-shared").
+  if [[ "${ENVIRONMENT}" == "prod" ]]; then
+    DB_CONTAINER="${PROJECT_NAME}-db-prod"
+  else
+    DB_CONTAINER="${PROJECT_NAME}-db-shared"
+  fi
   DB_BACKUP_DIR="/var/backups/${PROJECT_NAME}/db"
 
   if [[ ! -d "${DB_BACKUP_DIR}" ]]; then
@@ -231,8 +237,19 @@ if [[ "${WITH_DB}" == true ]]; then
 
   case "${DB_TYPE}" in
     postgres|postgresql)
-      DB_NAME="$(docker inspect --format='{{index .Config.Env}}' "${DB_CONTAINER}" 2>/dev/null | grep -o 'POSTGRES_DB=[^ ]*' | cut -d= -f2 || echo "${PROJECT_NAME}")"
-      zcat "${LATEST_DB_BACKUP}" | docker exec -i "${DB_CONTAINER}" psql -U postgres -d "${DB_NAME}" >> "${LOG_FILE}" 2>&1 || {
+      # POSTGRES_DB is never set on these images (each database is created
+      # manually), so it can't be read back from the container - the name
+      # follows the "<project>_<environment>" convention used by dbName in
+      # ciPipeline.groovy instead.
+      DB_NAME="${PROJECT_NAME}_${ENVIRONMENT}"
+      # These images are initialized with a project-specific superuser via
+      # POSTGRES_USER, not the default "postgres" role.
+      DB_USER="$(docker inspect --format='{{index .Config.Env}}' "${DB_CONTAINER}" 2>/dev/null | grep -o 'POSTGRES_USER=[^ ]*' | cut -d= -f2)"
+      if [[ -z "${DB_USER}" ]]; then
+        log "ERROR" "Could not determine database user for ${DB_CONTAINER}"
+        exit 1
+      fi
+      zcat "${LATEST_DB_BACKUP}" | docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" >> "${LOG_FILE}" 2>&1 || {
         log "ERROR" "Database restore failed"
         exit 1
       }

@@ -607,6 +607,34 @@ void call(Map config = [:]) {
             }
 
             // =================================================================
+            // STAGE: Snapshot Database (optional separate backend, PROD only)
+            // pg_dump taken immediately before the migration below alters the
+            // schema, so a bad PROD migration can be rolled back with
+            // `rollback.sh --with-db` (CST 4.3/7.2: snapshot BDD obligatoire
+            // avant tout deploiement PROD). DEV/PREPROD already get a daily
+            // dump via PROJECT_DB_DUMPS (docker-compose.backup.yml); PROD
+            // additionally gets one right before every migration.
+            // =================================================================
+            stage('Snapshot Database (PROD)') {
+                when {
+                    expression { return hasApi && env.DEPLOY_ENV == 'prod' && deployProd }
+                }
+                steps {
+                    withCredentials([usernamePassword(
+                        credentialsId   : credentialIdFor(dbCredentialsByEnv, 'prod', dbCredentialsId),
+                        usernameVariable: 'DB_USER',
+                        passwordVariable: 'DB_PASSWORD'
+                    )]) {
+                        snapshotProdDatabase(
+                            postgresContainer: dbContainerFor(projectName, 'prod'),
+                            dbName           : "${projectName}_prod",
+                            backupDir        : "/var/backups/${projectName}/db"
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
             // STAGE: Run Prisma Migrations (optional separate backend, DEV + PREPROD + PROD)
             // Applies pending migrations to the freshly-provisioned database
             // before the API container starts, so it doesn't crash hitting
@@ -1312,6 +1340,27 @@ void runPrismaMigrations(Map args) {
             -e DATABASE_URL="${databaseUrl}" \
             node:22-bullseye \
             npx prisma migrate deploy
+        set -x
+    """
+}
+
+// =============================================================================
+// Helper: pg_dump the PROD database to /var/backups/<project>/db/ right before
+// migrations run. This is the directory rollback.sh --with-db restores from,
+// so this snapshot is also what makes that flag usable for a real restore.
+// Requires DB_USER / DB_PASSWORD in the environment (bind via withCredentials).
+// =============================================================================
+void snapshotProdDatabase(Map args) {
+    String postgresContainer = args.postgresContainer
+    String dbName            = args.dbName
+    String backupDir         = args.backupDir
+
+    sh """
+        set +x
+        mkdir -p "${backupDir}"
+        docker exec -e PGPASSWORD="${env.DB_PASSWORD}" ${postgresContainer} \
+            pg_dump -U "${env.DB_USER}" -d ${dbName} \
+            | gzip > "${backupDir}/${dbName}-\$(date +%Y%m%d%H%M%S).sql.gz"
         set -x
     """
 }

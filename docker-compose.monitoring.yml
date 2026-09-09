@@ -6,7 +6,7 @@
 #   - Prometheus   (metrics collection & alerting rules)
 #   - Grafana      (dashboards & visualization)
 #   - Loki         (log aggregation)
-#   - Promtail     (log shipping agent)
+#   - Alloy        (log shipping agent)
 #   - cAdvisor     (container metrics)
 #   - AlertManager (alert routing & notifications)
 #   - Node Exporter (host-level metrics)
