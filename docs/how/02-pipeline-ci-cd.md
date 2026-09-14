@@ -173,11 +173,21 @@ hasApi`).
 
 ### 3.8 Validation post-deploiement (preprod uniquement)
 
-- **E2E Tests, OWASP ZAP** : contre PREPROD deploye, avant la
-  promotion vers PROD - c'est le dernier point ou un defaut fonctionnel ou une
-  mauvaise configuration de securite peut encore bloquer une release. Le
+- **E2E Tests** : contre PREPROD deploye, avant la promotion vers PROD - c'est
+  le dernier point ou un defaut fonctionnel peut encore bloquer une release. Le
   framework E2E est **Playwright par defaut** (`e2eFramework: 'playwright'`) ;
   un projet peut basculer sur Cypress via ce meme parametre.
+- **OWASP ZAP** (`runZap`) : scan baseline passif contre PREPROD deploye. Il
+  **ne bloque jamais** : le CST rend le scan obligatoire, pas ses resultats
+  bloquants. Toute alerte `WARN` ou `FAIL` passe le build en `UNSTABLE`
+  (notifie sur Mattermost). Un projet peut fournir un fichier de regles via
+  `zapConfigFile` (chemin relatif a la racine du depot, TSV
+  `id<TAB>niveau<TAB>nom`) : les regles classees `INFO` ou `IGNORE` (risque
+  accepte, a justifier dans le fichier) n'influent plus sur le resultat ; une
+  regle absente du fichier reste `WARN`, donc une nouvelle alerte repasse le
+  build en `UNSTABLE`. Un scan qui n'a pas abouti (cible injoignable, fichier
+  de regles absent ou mal forme) donne aussi `UNSTABLE`, avec un message
+  distinct.
 
 ### 3.9 Exception au "build once" : `webappIsEnvSpecific`
 

@@ -69,6 +69,11 @@ void call(Map config = [:]) {
     // OWASP ZAP baseline scan against the deployed PREPROD site (CST 3.2 lists
     // Trivy + Gitleaks + OWASP as the PREPROD security barrier).
     boolean runZap         = config.runZap         ?: false
+    // Optional ZAP rules file, relative to the project root (TSV: rule id,
+    // IGNORE|INFO|WARN|FAIL, name). Rules triaged to INFO/IGNORE no longer
+    // affect the result; unlisted rules stay WARN, so a new alert still marks
+    // the build UNSTABLE.
+    String zapConfigFile   = config.zapConfigFile   ?: null
 
     // Notification recipients per environment, e.g.
     //   [preprod: 'po@client.tld,techlead@agency.tld', prod: '...']
@@ -795,7 +800,7 @@ void call(Map config = [:]) {
                     expression { return env.DEPLOY_ENV == 'preprod' && runZap }
                 }
                 steps {
-                    runZapBaseline(env.HOST_WORKSPACE, traefikNetwork, preprodDomain)
+                    runZapBaseline(env.HOST_WORKSPACE, traefikNetwork, preprodDomain, zapConfigFile)
                 }
                 post {
                     always {
@@ -994,8 +999,18 @@ List apiSecretEnvFor(Map byEnv, String environment, List fallback) {
 // headers. Findings mark the build UNSTABLE rather than failing it, matching
 // how Semgrep is already handled - the CST makes the scan mandatory, not its
 // findings blocking.
+//
+// configFile (optional) is passed as -c; ZAP resolves it against /zap/wrk,
+// i.e. the project root.
 // =============================================================================
-void runZapBaseline(String hostWorkspace, String traefikNetwork, String targetDomain) {
+void runZapBaseline(String hostWorkspace, String traefikNetwork, String targetDomain, String configFile) {
+    // zap-baseline.py crashes with a plain exit 1 on a missing -c file, which
+    // would read as findings - check it here instead.
+    if (configFile && !fileExists(configFile)) {
+        unstable("OWASP ZAP baseline not run - zapConfigFile '${configFile}' not found in the project")
+        return
+    }
+    String configArg = configFile ? "-c ${configFile}" : ''
     int zapExit = sh(
         script: """
             docker run --rm \
@@ -1004,16 +1019,21 @@ void runZapBaseline(String hostWorkspace, String traefikNetwork, String targetDo
                 ghcr.io/zaproxy/zaproxy:stable \
                 zap-baseline.py \
                 -t https://${targetDomain} \
+                ${configArg} \
                 -r zap-report.html \
                 -J zap-report.json
         """,
         returnStatus: true
     )
-    // 0 = clean, 2 = warnings only, 1/3 = failures or a broken run.
+    // 0 = clean, 1 = FAIL rules, 2 = warnings only, anything else = the scan
+    // did not complete (3: target unreachable, malformed rules file; 125+:
+    // docker itself). Kept apart so a broken run is not read as findings.
     if (zapExit == 0) {
-        echo 'OWASP ZAP baseline passed - no findings'
-    } else {
+        echo 'OWASP ZAP baseline passed - no WARN/FAIL findings'
+    } else if (zapExit == 1 || zapExit == 2) {
         unstable("OWASP ZAP baseline reported findings (exit ${zapExit}) - review zap-report.html")
+    } else {
+        unstable("OWASP ZAP baseline did not complete (exit ${zapExit}) - no scan result, check the stage log")
     }
 }
 
