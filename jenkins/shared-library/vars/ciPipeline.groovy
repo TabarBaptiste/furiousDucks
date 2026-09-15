@@ -631,6 +631,7 @@ void call(Map config = [:]) {
                         passwordVariable: 'DB_PASSWORD'
                     )]) {
                         snapshotProdDatabase(
+                            traefikNetwork   : traefikNetwork,
                             postgresContainer: dbContainerFor(projectName, 'prod'),
                             dbName           : "${projectName}_prod",
                             backupDir        : "/var/backups/${projectName}/db"
@@ -1365,23 +1366,49 @@ void runPrismaMigrations(Map args) {
 }
 
 // =============================================================================
-// Helper: pg_dump the PROD database to /var/backups/<project>/db/ right before
-// migrations run. This is the directory rollback.sh --with-db restores from,
-// so this snapshot is also what makes that flag usable for a real restore.
-// Requires DB_USER / DB_PASSWORD in the environment (bind via withCredentials).
+// Helper: pg_dump the PROD database to /var/backups/<project>/db/ on the host
+// right before migrations run. This is the directory rollback.sh --with-db
+// restores from, so this snapshot is also what makes that flag usable for a
+// real restore.
+//
+// The dump is written by a throwaway postgres container bind-mounting the host
+// directory (same pattern as runPrismaMigrations), not by the Jenkins
+// container: Jenkins does not mount /var/backups, so a file written there
+// would stay in its ephemeral filesystem out of rollback.sh's reach (and sh
+// steps, uid 1000, cannot create it anyway). Docker creates the host directory.
+//
+// No pipe into gzip: pg_dump writes a file first, so its failure fails the step
+// and the migration never starts. Nothing matching *.sql.gz may survive a
+// failure (rollback.sh restores the most recent one), hence the .part name
+// until gzip -t passes. umask 077: the dump holds personal data; it is then
+// chowned to uid 1000, the host operator (ubuntu) who runs rollback.sh without
+// sudo and could not read a root-owned 600 file. Client and server share the
+// same major version (postgres:16).
+// Requires DB_USER / DB_PASSWORD in the environment (bind via withCredentials);
+// they reach the container through the shell environment, never through
+// Groovy interpolation.
 // =============================================================================
 void snapshotProdDatabase(Map args) {
+    String traefikNetwork    = args.traefikNetwork
     String postgresContainer = args.postgresContainer
     String dbName            = args.dbName
     String backupDir         = args.backupDir
 
     sh """
         set +x
-        mkdir -p "${backupDir}"
-        docker exec -e PGPASSWORD="${env.DB_PASSWORD}" ${postgresContainer} \
-            pg_dump -U "${env.DB_USER}" -d ${dbName} \
-            | gzip > "${backupDir}/${dbName}-\$(date +%Y%m%d%H%M%S).sql.gz"
-        set -x
+        PGPASSWORD="\$DB_PASSWORD" docker run --rm \
+            --network ${traefikNetwork} \
+            -e PGPASSWORD \
+            -e DB_USER \
+            -v "${backupDir}:/backup" \
+            postgres:16-alpine \
+            sh -c 'set -e
+                   umask 077
+                   f=/backup/${dbName}-\$(date +%Y%m%d%H%M%S).sql
+                   pg_dump -h ${postgresContainer} -U "\$DB_USER" -d ${dbName} > "\$f" || { rm -f "\$f"; exit 1; }
+                   gzip -c "\$f" > "\$f.gz.part" && gzip -t "\$f.gz.part" && chown 1000:1000 "\$f.gz.part" || { rm -f "\$f" "\$f.gz.part"; exit 1; }
+                   mv "\$f.gz.part" "\$f.gz"
+                   rm -f "\$f"'
     """
 }
 
