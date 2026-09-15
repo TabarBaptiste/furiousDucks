@@ -17,6 +17,11 @@
 #   --with-db      Also rollback the database (requires DB backup).
 #                  PostgreSQL only for now (only DB engine used by
 #                  the current pilot project, The Tip Top).
+#                  DESTRUCTIVE: schema "public" is dropped and rebuilt from the
+#                  latest dump, so everything written since that dump is lost.
+#                  The current state is dumped to STAGING_DIR first, and the
+#                  API container is NOT rolled back (redeploy it via Jenkins).
+#   --yes, -y      Skip the confirmation prompt (for unattended runs)
 #   --help, -h     Show help message
 #
 # Required environment variables:
@@ -33,6 +38,9 @@ NETWORK="${NETWORK:-workflow-network}"
 HEALTH_PATH="${HEALTH_PATH:-/health}"
 LOG_DIR="${LOG_DIR:-/var/log/deploy}"
 LOG_FILE="${LOG_DIR}/rollback-$(date +%Y%m%d-%H%M%S).log"
+# Where --with-db keeps the pre-rollback dump, same location restore-volume.sh
+# uses for the state it is about to overwrite.
+STAGING_DIR="${STAGING_DIR:-/var/tmp/furious-ducks-restore}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,7 +88,11 @@ Arguments:
   PREVIOUS_TAG   Image tag to roll back to (optional; auto-detected if omitted)
 
 Options:
-  --with-db      Also rollback the database using the latest backup
+  --with-db      Also rollback the database using the latest backup.
+                 DESTRUCTIVE: replaces the contents of the database (schema
+                 "public" is dropped and rebuilt from the dump). The current
+                 state is dumped to ${STAGING_DIR} first.
+  --yes, -y      Skip the confirmation prompt (for unattended runs)
   --help, -h     Show this help message
 
 Examples:
@@ -98,6 +110,7 @@ PROJECT_NAME=""
 ENVIRONMENT=""
 PREVIOUS_TAG=""
 WITH_DB=false
+ASSUME_YES=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -106,6 +119,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-db)
       WITH_DB=true
+      shift
+      ;;
+    --yes|-y)
+      ASSUME_YES=1
       shift
       ;;
     *)
@@ -230,8 +247,14 @@ if [[ "${WITH_DB}" == true ]]; then
     exit 1
   fi
 
-  # Determine database type and restore
-  DB_TYPE="$(docker inspect --format='{{index .Config.Labels "db.type"}}' "${DB_CONTAINER}" 2>/dev/null || echo 'postgres')"
+  # Determine database type and restore. `docker inspect` succeeds and prints
+  # an empty string when the label is absent, so the `|| echo 'postgres'`
+  # fallback never fired: no container created by ensureSharedDatabase() sets
+  # db.type, and every --with-db run died on "Unsupported database type".
+  DB_TYPE="$(docker inspect --format='{{index .Config.Labels "db.type"}}' "${DB_CONTAINER}" 2>/dev/null || echo '')"
+  if [[ -z "${DB_TYPE}" || "${DB_TYPE}" == "<no value>" ]]; then
+    DB_TYPE="postgres"
+  fi
 
   log "INFO" "Restoring ${DB_TYPE} database from backup..."
 
@@ -249,10 +272,103 @@ if [[ "${WITH_DB}" == true ]]; then
         log "ERROR" "Could not determine database user for ${DB_CONTAINER}"
         exit 1
       fi
-      zcat "${LATEST_DB_BACKUP}" | docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" >> "${LOG_FILE}" 2>&1 || {
-        log "ERROR" "Database restore failed"
+      # A plain pg_dump carries no DROP statement, and psql without
+      # ON_ERROR_STOP ignores every error: replaying the dump over the live
+      # database left the migration in place, restored nothing and still
+      # exited 0. Schema "public" is therefore dropped and rebuilt from the
+      # dump inside a single transaction - all of it applies, or none of it.
+      if ! gzip -t "${LATEST_DB_BACKUP}" 2>> "${LOG_FILE}"; then
+        log "ERROR" "Backup archive unreadable or corrupt: ${LATEST_DB_BACKUP}"
+        log "ERROR" "Nothing was touched. A root-owned dump needs sudo to read."
         exit 1
-      }
+      fi
+
+      # Recreated with its current owner, rather than the restoring role.
+      SCHEMA_OWNER="$(docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" -Atc \
+        "select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'public'" 2>/dev/null || echo '')"
+      SCHEMA_OWNER="${SCHEMA_OWNER:-pg_database_owner}"
+
+      log "WARN" "About to REPLACE the contents of '${DB_NAME}' in '${DB_CONTAINER}'"
+      log "WARN" "Everything written since ${LATEST_DB_BACKUP} will be lost"
+      log "WARN" "This script does not roll back the API container - redeploy it via Jenkins"
+
+      if [[ ${ASSUME_YES} -eq 0 ]]; then
+        if [[ ! -t 0 ]]; then
+          log "ERROR" "Not a terminal and --yes not given - refusing to overwrite the database"
+          exit 1
+        fi
+        read -r -p "Replace the contents of ${DB_NAME}? (y/N) " confirm
+        if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+          log "INFO" "Database rollback cancelled by user"
+          exit 0
+        fi
+      fi
+
+      # Dump the state we are about to overwrite, like restore-volume.sh does.
+      mkdir -p "${STAGING_DIR}"
+      SAFETY_DUMP="${STAGING_DIR}/${DB_NAME}-before-rollback-$(date +%Y%m%d%H%M%S).sql.gz"
+      log "INFO" "Dumping the current state to ${SAFETY_DUMP}..."
+      if ! docker exec "${DB_CONTAINER}" pg_dump -U "${DB_USER}" -d "${DB_NAME}" 2>> "${LOG_FILE}" | gzip > "${SAFETY_DUMP}"; then
+        rm -f "${SAFETY_DUMP}"
+        log "ERROR" "Could not dump the current state - aborting before touching the database"
+        exit 1
+      fi
+      chmod 600 "${SAFETY_DUMP}"
+
+      # Whatever writes to this database keeps writing during the restore and
+      # holds locks the DROP SCHEMA needs. The API is the real client
+      # (dbContainerFor()/deployApi in ciPipeline.groovy); the front-end is
+      # stopped too and the application rollback below starts it again.
+      STOPPED_CLIENTS=()
+      if [[ "${ENVIRONMENT}" == "prod" ]]; then
+        DB_CLIENTS=("${CONTAINER_NAME}" "${PROJECT_NAME}-api-prod-blue" "${PROJECT_NAME}-api-prod-green")
+      else
+        DB_CLIENTS=("${CONTAINER_NAME}" "${PROJECT_NAME}-api-${ENVIRONMENT}")
+      fi
+      for client in "${DB_CLIENTS[@]}"; do
+        if docker ps -q -f "name=^${client}$" -f "status=running" | grep -q .; then
+          log "INFO" "Stopping ${client} for the duration of the restore..."
+          docker stop "${client}" >> "${LOG_FILE}" 2>&1 || true
+          STOPPED_CLIENTS+=("${client}")
+        fi
+      done
+      docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres -Atc \
+        "select pg_terminate_backend(pid) from pg_stat_activity where datname = '${DB_NAME}' and pid <> pg_backend_pid()" \
+        >> "${LOG_FILE}" 2>&1 || true
+
+      RESTORE_FAILED=false
+      {
+        printf "SET lock_timeout = '30s';\n"
+        printf 'DROP SCHEMA public CASCADE;\n'
+        printf 'CREATE SCHEMA public AUTHORIZATION %s;\n' "${SCHEMA_OWNER}"
+        printf 'GRANT USAGE ON SCHEMA public TO PUBLIC;\n'
+        zcat "${LATEST_DB_BACKUP}"
+      } | docker exec -i "${DB_CONTAINER}" psql -v ON_ERROR_STOP=1 --single-transaction \
+            -U "${DB_USER}" -d "${DB_NAME}" >> "${LOG_FILE}" 2>&1 || RESTORE_FAILED=true
+
+      if (( ${#STOPPED_CLIENTS[@]} > 0 )); then
+        for client in "${STOPPED_CLIENTS[@]}"; do
+          docker start "${client}" >> "${LOG_FILE}" 2>&1 || log "WARN" "Could not restart ${client}"
+        done
+      fi
+
+      if [[ "${RESTORE_FAILED}" == true ]]; then
+        log "ERROR" "Database restore failed - transaction rolled back, ${DB_NAME} is unchanged"
+        log "ERROR" "Details in ${LOG_FILE}; pre-rollback dump kept at ${SAFETY_DUMP}"
+        exit 1
+      fi
+
+      RESTORED_TABLES="$(docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" -Atc \
+        "select count(*) from pg_tables where schemaname = 'public'" 2>/dev/null || echo '0')"
+      if [[ "${RESTORED_TABLES}" -eq 0 ]]; then
+        log "ERROR" "psql reported success but schema 'public' is empty - check ${LOG_FILE}"
+        log "ERROR" "Restore the previous state: ${SAFETY_DUMP}"
+        exit 1
+      fi
+
+      log "INFO" "Restored ${RESTORED_TABLES} tables into ${DB_NAME}"
+      log "INFO" "Pre-rollback state kept at ${SAFETY_DUMP}"
+      log "INFO" "Undo: { printf 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION ${SCHEMA_OWNER};'; zcat ${SAFETY_DUMP}; } | docker exec -i ${DB_CONTAINER} psql -v ON_ERROR_STOP=1 --single-transaction -U ${DB_USER} -d ${DB_NAME}"
       ;;
     *)
       log "ERROR" "Unsupported database type: ${DB_TYPE}"
