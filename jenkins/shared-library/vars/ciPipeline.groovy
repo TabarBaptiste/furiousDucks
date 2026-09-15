@@ -1287,6 +1287,10 @@ void deployApiBlueGreen(Map args) {
 // stops/recreates them, since (unlike stateless app containers) that would
 // destroy data on every build. Generic across projects, not thetiptop-specific.
 // Requires DB_USER / DB_PASSWORD in the environment (bind via withCredentials).
+// The db.type label is what scripts/rollback.sh --with-db reads to choose its
+// restore path. Containers created before this label keep running without it -
+// this helper never recreates them - and rely on that script's postgres
+// fallback instead.
 // =============================================================================
 void ensureSharedDatabase(Map args) {
     String pgContainer = args.postgresContainer
@@ -1301,6 +1305,7 @@ void ensureSharedDatabase(Map args) {
                 --name ${pgContainer} \
                 --restart unless-stopped \
                 --network ${network} \
+                --label db.type=postgres \
                 -e POSTGRES_USER="\${DB_USER}" \
                 -e POSTGRES_PASSWORD="\${DB_PASSWORD}" \
                 -v ${pgContainer}-data:/var/lib/postgresql/data \
