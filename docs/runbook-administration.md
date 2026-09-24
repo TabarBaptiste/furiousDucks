@@ -198,6 +198,27 @@ docker exec -it common-backup-manager-ci /scripts/restore.sh <snapshot_id> /tmp/
 docker exec -it common-backup-manager-ci /scripts/restore.sh <snapshot_id> /tmp/restore-test --volume jenkins-data
 ```
 
+**Restaurer un volume dans son emplacement réel** — `restore.sh` s'arrête à l'extraction dans un dossier temporaire (le container `backup-manager` monte tous les volumes en lecture seule, par sécurité). [`scripts/restore-volume.sh`](../scripts/restore-volume.sh) s'exécute depuis l'hôte et enchaîne le reste : extraction, arrêt des conteneurs consommateurs, archive de sécurité à froid, remplacement du contenu, redémarrage.
+
+```bash
+# Lister les snapshots disponibles
+./infrastructure/scripts/restore-volume.sh
+
+# Restaurer un volume (demande confirmation)
+./infrastructure/scripts/restore-volume.sh <snapshot_id> jenkins-data
+
+# Conserver en plus une copie inspectable sur l'hôte
+./infrastructure/scripts/restore-volume.sh <snapshot_id> thetiptop-db-prod-data --keep-staging
+```
+
+Le nom du volume à passer est celui qui apparaît dans les chemins des snapshots (`jenkins-data`, `thetiptop-db-prod-data`...) ; la correspondance avec le vrai volume Docker (`common-jenkins-data-ci`...) est résolue automatiquement depuis les montages de `backup-manager`, donc ajouter un projet au périmètre de sauvegarde ne demande aucune modification du script.
+
+Le script refuse d'agir si le snapshot ne correspond pas au volume demandé, si l'extraction est vide, ou s'il tourne hors terminal sans `--yes`. Avant tout écrasement, il écrit une archive `.tar.gz` de l'état courant sous `/var/tmp/furious-ducks-restore/` et affiche en fin d'exécution la commande exacte pour revenir en arrière. En cas d'échec en cours de route, les conteneurs arrêtés sont redémarrés automatiquement.
+
+⚠️ Le transfert passe par un flux `tar` de conteneur à conteneur pour préserver les UID/GID : ne pas le remplacer par une copie via l'hôte, qui réattribuerait tous les fichiers à l'utilisateur courant et empêcherait Postgres ou Redis de relire leurs données.
+
+⚠️ Harbor est un bind mount (`/data`) et non un volume Docker : le script le détecte et refuse — sa restauration reste manuelle.
+
 **Dump logique manuel d'une base Thé Tip Top** (recommandé avant toute opération risquée en DEV/PREPROD/PROD, pour disposer d'un point de restauration plus récent que le dump nocturne) :
 
 ```bash
