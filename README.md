@@ -147,7 +147,6 @@ Le script `scripts/init-infrastructure.sh` enchaîne ces étapes. Le domaine `wk
 | Document | Contenu |
 |---|---|
 | [docs/00-getting-started.md](docs/00-getting-started.md) | Installation pas à pas, à lire en premier |
-| [docs/01-ecarts-vps-cst.md](docs/01-ecarts-vps-cst.md) | Écarts entre le déploiement réel et le cahier des spécifications |
 | [docs/how/01-environnements-dev-preprod-prod.md](docs/how/01-environnements-dev-preprod-prod.md) | Environnements et stratégie de déploiement |
 | [docs/how/02-pipeline-ci-cd.md](docs/how/02-pipeline-ci-cd.md) | Fonctionnement du pipeline et de la shared library |
 | [docs/how/03-backup.md](docs/how/03-backup.md) | Sauvegarde, rétention et restauration |
