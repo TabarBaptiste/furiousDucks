@@ -1,4 +1,4 @@
-# Furious Ducks — Plateforme CI/CD
+# Furious Ducks - Plateforme CI/CD
 
 Plateforme d'infrastructure CI/CD complète, décrite en **Infrastructure as Code** et déployée avec **Docker Compose** sur un VPS Linux. Elle fournit à des projets clients toute la chaîne de livraison : gestion du code source, intégration continue, contrôles qualité et sécurité, registre d'images, déploiement multi-environnements, supervision et sauvegardes.
 
@@ -156,9 +156,9 @@ Le script `scripts/init-infrastructure.sh` enchaîne ces étapes. Le domaine `wk
 
 ## Auteurs
 
-- **Baptiste Tabar Labonne** — [@TabarBaptiste](https://github.com/TabarBaptiste)
-- **Harena Andriamananjara Mandimby** — [@AndriamHarena](https://github.com/AndriamHarena)
-- **Ibrahima Elhadj Bah** — [@Ibrahima17](https://github.com/Ibrahima17)
+- **Baptiste Tabar Labonne** - [@TabarBaptiste](https://github.com/TabarBaptiste)
+- **Harena Andriamananjara Mandimby** - [@AndriamHarena](https://github.com/AndriamHarena)
+- **Ibrahima Elhadj Bah** - [@Ibrahima17](https://github.com/Ibrahima17)
 
 ## Licence
 
