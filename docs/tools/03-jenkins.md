@@ -59,9 +59,12 @@
 - `harbor-credentials` (push/pull d'images Docker)
 - `sonarqube-token` (declenchement des scans)
 - `gitlab-api-token` (acces API, statut de commit)
-- `gitlab-ssh-key` (checkout SCM de la shared library)
-- Par projet client : credentials BDD (`<projet>-db-credentials`) et secrets
-  applicatifs (`apiSecretEnv`)
+- `infrastructure-shared-library-deploy-key` (checkout SCM de la shared
+  library : deploy key GitLab en **lecture seule** du depot `infrastructure`)
+- Par projet client : une deploy key GitLab en lecture seule pour le checkout
+  du depot (`thetiptop-deploy-key`, et `thetiptop-k6-deploy-key` pour le job
+  k6), credentials BDD (`<projet>-db-credentials`) et secrets applicatifs
+  (`apiSecretEnv`)
 
 ### Shared Library
 
@@ -128,7 +131,7 @@ Cree les credentials suivants :
 | ID Jenkins | Type | Contenu |
 |------------|------|---------|
 | `gitlab-api-token` | Secret text | Le token GitLab cree dans `02-gitlab-ce.md` |
-| `gitlab-ssh-key` | SSH Username with private key | username `git`, ta cle SSH privee |
+| `infrastructure-shared-library-deploy-key` | SSH Username with private key | username `git`, cle privee d'une **deploy key GitLab en lecture seule** du depot `infrastructure` (utilisee par la shared library, voir 3.8) |
 | `harbor-credentials` | Username with password | `admin` / `HARBOR_ADMIN_PASSWORD` |
 | `sonarqube-token` | Secret text | Le token SonarQube (a creer ensuite, voir `05-sonarqube.md` section 3.4) |
 
@@ -165,7 +168,11 @@ configure SonarQube et cree le credential `sonarqube-token`.)
 - Default version : `main`
 - Retrieval method : Modern SCM > Git
 - Project Repository : URL d'un depot GitLab contenant le contenu de `infrastructure/jenkins/shared-library/`
-- Credentials : `gitlab-ssh-key`
+- Credentials : `infrastructure-shared-library-deploy-key`
+
+Chaque projet client a de la meme facon sa propre deploy key en lecture seule
+(`thetiptop-deploy-key` pour le job multibranch `thetiptop`) : une cle compromise
+ne donne acces qu'a un seul depot, en lecture.
 
 (Tu peux aussi pousser le contenu du dossier shared-library dans un nouveau depot GitLab dedie.)
 
