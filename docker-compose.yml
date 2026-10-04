@@ -54,7 +54,7 @@
 #      to add a component) regenerates docker-compose.yml from scratch and
 #      WIPES steps 2-3 above. Re-apply them and "docker compose up -d" again
 #      every time "./prepare" is run.
-#   See docs/04-harbor.md, section "Metriques Prometheus", for the full
+#   See docs/tools/04-harbor.md, section "Metriques Prometheus", for the full
 #   step-by-step and prometheus.yml's "harbor" job for the scrape target.
 #
 # Prerequisites:

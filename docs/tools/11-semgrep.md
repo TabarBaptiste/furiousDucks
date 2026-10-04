@@ -16,14 +16,14 @@
 Pipeline Jenkins (branche main)
 +----------------------------------------------------+
 |                                                    |
-|  Build -> Tests -> Trivy -> Semgrep SAST -> Deploy |
-|                                |                   |
-|                         +------+------+            |
-|                         | Code source |            |
-|                         | analyse SAST|            |
-|                         +------+------+            |
-|                                |                   |
-|                        Rapport JSON archive        |
+|  Tests -> Semgrep SAST -> Build -> Trivy -> Deploy |
+|                |                                   |
+|         +------+------+                            |
+|         | Code source |                            |
+|         | analyse SAST|                            |
+|         +------+------+                            |
+|                |                                   |
+|        Rapport JSON archive                        |
 +----------------------------------------------------+
 ```
 
@@ -46,9 +46,10 @@ Semgrep detecte des patterns de code vulnerables avec des regles declaratives : 
 ### Execution dans le pipeline
 
 Semgrep est execute via `docker run semgrep/semgrep:1.175.0` par la shared
-library, sur les branches qui produisent ou promeuvent un artefact : `main`
-(PREPROD) et les tags `vX.Y.Z` (PROD). Il ne tourne ni sur `develop` (deja
-couvert par SonarQube) ni sur `feature/*`. Le stage est place **avant**
+library, uniquement sur `main` (PREPROD) : c'est la porte d'entree vers la
+production et le dernier point ou le code source change encore. Il ne tourne ni
+sur `develop` (deja couvert par SonarQube), ni sur `feature/*`, ni sur les tags
+`vX.Y.Z` (le commit tagge a deja ete analyse sur `main`). Le stage est place **avant**
 `Docker Build`, la ou il peut encore bloquer la construction. Un resultat non
 vide passe le build en `UNSTABLE` (il ne l'arrete pas). Voir
 `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy` et la matrice de

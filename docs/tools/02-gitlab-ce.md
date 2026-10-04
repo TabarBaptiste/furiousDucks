@@ -16,7 +16,7 @@
   - `hotfix/*` : branches de correction urgente
 - **Conventional Commits** : format `type(scope): description` (feat, fix, docs, chore, refactor, test)
 - **Semantic Versioning** : `vMAJOR.MINOR.PATCH` (ex: v1.2.3)
-- **Merge Request obligatoire** avec 1 approbation minimum
+- **Merge Request obligatoire**, avec **1 approbation minimum par convention d'equipe** : GitLab CE ne peut pas l'imposer techniquement (les regles d'approbation sont reservees aux editions Premium et Ultimate), c'est donc a la personne qui fusionne de verifier qu'un relecteur a approuve
 - **Protection** des branches `main` et `develop` (pas de push direct)
 
 ## 2. Configuration
@@ -142,9 +142,9 @@ Quand tu crees un nouveau projet :
 2. Coche "Initialize with README" si tu pars de zero, sinon decoche.
 3. Visibility : Internal (visible par tous les users connectes) ou Private.
 4. Une fois cree, va dans **Settings > Repository > Protected Branches** :
-   - **main** : Allowed to merge = Maintainers, Allowed to push = No one, Code owner approval = optionnel
+   - **main** : Allowed to merge = Maintainers, Allowed to push = No one
    - **develop** : Allowed to merge = Developers + Maintainers, Allowed to push = No one
-5. **Settings > Merge requests** : coche "Pipelines must succeed", "All discussions must be resolved", "Approvals required: 1".
+5. **Settings > Merge requests** : coche "Pipelines must succeed" et "All discussions must be resolved". L'approbation d'un relecteur (1 minimum) n'est pas configurable dans GitLab CE : c'est une regle d'equipe, a verifier avant chaque fusion.
 6. **Settings > Webhooks** : ajoute le webhook Jenkins (voir 4.4 ci-dessous).
 
 ## 4. Utilisation au quotidien
@@ -270,7 +270,7 @@ Resultat attendu : clone reussi du depot via SSH sur le port 2222.
 1. Creer une branche `feature/test-gitflow` depuis `develop`
 2. Effectuer un commit et pousser la branche
 3. Creer une Merge Request vers `develop`
-4. Verifier que l'approbation est requise avant le merge
+4. Verifier que le merge est bloque tant que le pipeline n'est pas vert et que les discussions ne sont pas resolues (l'approbation d'un relecteur reste une regle d'equipe, non imposee par GitLab CE)
 5. Supprimer la branche feature apres le merge
 
 ## 6. Depannage

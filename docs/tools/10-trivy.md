@@ -14,13 +14,15 @@
 ```
 Pipeline Jenkins
 +--------------------------------------------------+
-| Build -> Tests -> Trivy Scan -> Deploy           |
+| Docker Build -> Trivy Scan -> Docker Push        |
 |                       |                          |
 |                  +----+----+                     |
 |                  | CRITICAL|--> Pipeline BLOQUE  |
-|                  | HIGH    |--> Avertissement    |
-|                  | MEDIUM  |--> Info             |
+|                  | HIGH    |--> Ne bloque pas    |
+|                  | MEDIUM  |--> Ne bloque pas    |
 |                  +---------+                     |
+| Le scan precede le push : une image vulnerable   |
+| n'atteint jamais Harbor.                         |
 +--------------------------------------------------+
 
 Harbor Registry
@@ -37,37 +39,33 @@ Trivy detecte les CVE dans les packages systeme et dans les dependances applicat
 
 ### Execution dans le pipeline
 
-Trivy est execute via `docker run` dans le pipeline Jenkins, sans necessiter de conteneur permanent :
+Trivy est execute via `docker run` par la shared library (`trivyScan()` dans `ciPipeline.groovy`), sans conteneur permanent. Le stage `Trivy Scan` tourne sur `develop` et `main` (et sur le front de PROD s'il est reconstruit, voir `webappIsEnvSpecific`), **avant** le push vers Harbor. Un tag ne rescanne pas l'image qu'il promeut : c'est le re-scan quotidien de Harbor qui couvre les CVE apparues apres coup.
 
-```groovy
-stage('Security Scan') {
-    steps {
-        sh '''
-            docker run --rm \
-                -v /var/run/docker.sock:/var/run/docker.sock \
-                -v trivy-cache:/root/.cache/ \
-                aquasec/trivy image \
-                --severity CRITICAL,HIGH \
-                --exit-code 1 \
-                --format json \
-                --output /tmp/trivy-report.json \
-                ${IMAGE_NAME}:${IMAGE_TAG}
-        '''
-    }
-    post {
-        always {
-            archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
-        }
-    }
-}
+Le scan bloquant :
+
+```bash
+docker run --rm \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "${HOST_WORKSPACE}:/work" \
+    aquasec/trivy:latest image \
+    --exit-code 1 \
+    --severity CRITICAL \
+    --ignorefile /work/.trivyignore \
+    --no-progress \
+    --format table \
+    ${DOCKER_IMAGE}:${IMAGE_TAG}
 ```
+
+L'option `--ignorefile` n'est ajoutee que si le projet fournit un `.trivyignore` a sa racine.
+
+Si ce scan echoue, un **second** scan (`HIGH,CRITICAL`, format JSON) ecrit `trivy-report.json` dans le workspace, archive par Jenkins, puis le build echoue (`error`).
 
 ### Commandes type
 
 | Commande | Description |
 |----------|-------------|
 | `trivy image IMAGE` | Scan basique d'une image |
-| `trivy image --severity CRITICAL,HIGH --exit-code 1 IMAGE` | Scan avec seuil bloquant |
+| `trivy image --severity CRITICAL --exit-code 1 IMAGE` | Scan avec seuil bloquant (celui du pipeline) |
 | `trivy image --format json -o report.json IMAGE` | Rapport JSON |
 | `trivy image --format table IMAGE` | Rapport console lisible |
 | `trivy fs --security-checks vuln,config .` | Scan du filesystem (dependances + config) |
@@ -85,13 +83,13 @@ stage('Security Scan') {
 | Severite     | Action                          |
 |-------------|----------------------------------|
 | **CRITICAL** | Bloquant - pipeline en echec    |
-| **HIGH**     | Avertissement - log visible     |
-| **MEDIUM**   | Information - log uniquement    |
-| **LOW**      | Ignore                          |
+| **HIGH**     | Ne bloque pas. N'apparait que dans `trivy-report.json`, genere apres un echec CRITICAL, et dans le rapport Harbor |
+| **MEDIUM**   | Ne bloque pas, non remonte par le pipeline |
+| **LOW**      | Ne bloque pas, non remonte par le pipeline |
 
-### Cache partage
+### Cache
 
-Un volume Docker `trivy-cache` est partage entre les executions pour eviter de retelecharger la base de vulnerabilites a chaque scan. La base est mise a jour automatiquement si elle date de plus de 12 heures.
+Le pipeline **ne monte pas de volume de cache** : chaque scan retelecharge la base de vulnerabilites. Les commandes manuelles de cette fiche utilisent un volume `trivy-cache` pour ne pas la retelecharger a chaque essai ; il n'a aucun lien avec le pipeline.
 
 ### Integration Harbor
 

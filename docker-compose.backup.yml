@@ -15,7 +15,7 @@
 #   - The ci_network and workflow-network must already exist (external).
 #   - External volumes (gitlab-*, jenkins-*, prometheus-*, grafana-*,
 #     sonarqube-*, mattermost-*) must be created by the main CI compose stack.
-#   - If Harbor is deployed on this host (see docs/04-harbor.md), its data
+#   - If Harbor is deployed on this host (see docs/tools/04-harbor.md), its data
 #     directory (data_volume in harbor.yml, default /data) must exist
 #     at the path bind-mounted below. If Harbor is not deployed yet,
 #     backup-harbor.sh detects the missing path and skips without failing.
@@ -143,7 +143,7 @@ services:
       - thetiptop-redis-preprod-data:/backup-sources/projects/thetiptop-redis-preprod-data:ro
       - thetiptop-redis-shared-data:/backup-sources/projects/thetiptop-redis-shared-data:ro
       # --- Harbor registry (bind mount, not a Docker volume - Harbor is
-      #     deployed separately via its own installer, see docs/04-harbor.md).
+      #     deployed separately via its own installer, see docs/tools/04-harbor.md).
       #     Host path must match data_volume in harbor.yml, whose default is
       #     /data (holding registry/, database/, secret/). NOTE: database/ is a
       #     live PostgreSQL data directory, so this is a cold copy; for a fully

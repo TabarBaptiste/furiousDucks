@@ -3,7 +3,7 @@
 ## 1. Presentation
 
 - **Role** : Detection de secrets (mots de passe, tokens, cles API) commits accidentellement
-- **Integration** : Stage Jenkins en PREPROD, **bloquant** (pipeline en echec si secret detecte)
+- **Integration** : Stage Jenkins sur toutes les branches **sauf les tags** (`feature/*`, `release/*`, `hotfix/*`, `develop`, `main`), **bloquant** (pipeline en echec si secret detecte)
 - **Pas de port expose** (CLI uniquement)
 - **Faible taux de faux positifs** grace a des regexes precises et detection d'entropie
 - **Complement** de la politique "aucun secret dans Git"
@@ -12,15 +12,16 @@
 ### Architecture
 
 ```
-Pipeline Jenkins (branche main)
+Pipeline Jenkins (toute branche sauf tag)
 +------------------------------------------------------------+
 |                                                            |
-|  Build -> Tests -> Trivy -> Semgrep -> Gitleaks -> Deploy  |
-|                                            |               |
-|                                  Secret detecte = ARRET    |
-|                                            |               |
-|                                  Rapport JSON archive      |
+|  Lint -> Tests -> Gitleaks -> ... -> Docker Build -> ...   |
+|                       |                                    |
+|             Secret detecte = ARRET                         |
+|                       |                                    |
+|             Rapport JSON archive                           |
 +------------------------------------------------------------+
+Gitleaks passe AVANT tout build d'image : un secret n'atteint jamais Harbor.
 ```
 
 ### Types de secrets detectes
@@ -40,7 +41,7 @@ Pipeline Jenkins (branche main)
 
 ### Execution dans le pipeline
 
-Gitleaks est execute via `docker run` dans le Jenkinsfile, sur la branche `main`. Resultat **bloquant** : si un secret est detecte, le pipeline echoue et le deploiement PREPROD/PROD est annule. Voir le stage **"Gitleaks"** dans `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy`.
+Gitleaks est execute via `docker run` par la shared library, **avant le build de l'image**, sur toutes les branches sauf les tags `vX.Y.Z` (un tag promeut un commit deja scanne sur `main`). Il tourne des les branches de travail : un secret pousse sur une `feature/*` est deja compromis, donc la valeur du controle tient a sa precocite. Resultat **bloquant** : si un secret est detecte, le pipeline echoue et aucune image n'est construite ni deployee. Voir le stage **"Gitleaks"** dans `infrastructure/jenkins/shared-library/vars/ciPipeline.groovy`.
 
 ### Commandes type
 

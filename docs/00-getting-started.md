@@ -131,10 +131,11 @@ sudo ufw enable
 ```bash
 sudo mkdir -p /opt/furious-ducks
 sudo chown $USER:$USER /opt/furious-ducks
-cd /opt/furious-ducks
-git clone <URL_DU_DEPOT> .
-cd infrastructure
+git clone <URL_DU_DEPOT> /opt/furious-ducks/infrastructure
+cd /opt/furious-ducks/infrastructure
 ```
+
+Le depot est clone **dans** `/opt/furious-ducks/infrastructure` : c'est la racine du depot, et c'est depuis ce dossier que toutes les commandes de ce guide se lancent.
 
 ### 2.2 Generer le fichier `.env`
 
@@ -383,8 +384,9 @@ git push -u origin main
 
 # Protege main et develop dans GitLab :
 # Settings > Repository > Protected Branches
-#   - main : Maintainers only push, allow merge from Maintainers, require 1 approval
+#   - main : Maintainers only push, allow merge from Maintainers
 #   - develop : same
+# (l'approbation d'un relecteur est une regle d'equipe : GitLab CE ne peut pas l'imposer)
 ```
 
 ### 5.3 Configurer le webhook GitLab vers Jenkins
@@ -451,7 +453,7 @@ git commit -m "feat(panier): ajouter le bouton supprimer"
 git push -u origin feature/nom-de-la-feature
 ```
 
-Dans GitLab : **Create Merge Request** vers `develop`. Demander une approbation. Une fois mergee, le pipeline DEV se relance et redeploie.
+Dans GitLab : **Create Merge Request** vers `develop`. Demander l'approbation d'au moins un relecteur (regle d'equipe, non imposee par GitLab CE). Une fois mergee, le pipeline DEV se relance et redeploie.
 
 ### 6.2 Preparer une release vers PROD
 
